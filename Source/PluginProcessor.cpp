@@ -515,8 +515,12 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 	// Taper length: fraction of grain used for fade-in/out (from ENV GRA)
 	// Minimum must cover at least 2x the pitch ratio step so the fade-out
 	// zone can't be entirely skipped in a single read advance.
-	const float minTaper = juce::jmax (2.0f, v.pitchRatio * 3.0f);
-	const float taperLen = juce::jmax (minTaper, envGraCrossfadeFraction_ * v.grainLenSamples * 0.5f);
+	// Cap to 40% of grain so both tapers (in+out) never exceed 80% — the
+	// envelope always reaches full amplitude even on very short grains.
+	const float minTaper = juce::jmax (2.0f, v.pitchRatio * 2.0f);
+	const float maxTaper = juce::jmax (2.0f, v.grainLenSamples * 0.4f);
+	const float taperLen = juce::jmin (maxTaper,
+	                                   juce::jmax (minTaper, envGraCrossfadeFraction_ * v.grainLenSamples * 0.5f));
 
 	if (pos < taperLen)
 		return taperWeight (pos, taperLen);
@@ -864,22 +868,17 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				voiceA_[ch].readPos += voiceA_[ch].pitchRatio;
 				if (voiceA_[ch].readPos >= voiceA_[ch].grainLenSamples || voiceA_[ch].readPos < 0.0f)
 				{
-					if (autoEnabled)
+					if (autoEnabled || triggerEnabled)
 					{
-						// Auto-retrigger: let the phase counter restart it
-						voiceA_[ch].active = false;
+						// Immediate relaunch: prevents silence gaps when pitch > 1
+						// or formant > 0 causes the grain to end before the auto
+						// phase counter triggers the next one.
+						launchNewGrain (ch, captureLen, reverseEnabled);
+						autoPhaseCounter_ = 0.0f;
 					}
 					else
 					{
-						// Relaunch with current parameters if TRIGGER is held
-						if (triggerEnabled)
-						{
-							launchNewGrain (ch, captureLen, reverseEnabled);
-						}
-						else
-						{
-							voiceA_[ch].active = false;
-						}
+						voiceA_[ch].active = false;
 					}
 				}
 			}
