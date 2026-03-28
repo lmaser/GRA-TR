@@ -74,6 +74,7 @@ namespace
 
 	inline float taperWeight (float pos, float taperLen) noexcept
 	{
+		if (pos <= 0.0f) return 0.0f;
 		const float norm = pos * (128.0f / taperLen);
 		const int idx = static_cast<int>(norm);
 		if (idx >= 128) return 1.0f;
@@ -506,6 +507,10 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 {
 	if (!v.active || v.grainLenSamples < 2.0f)
+		return 0.0f;
+
+	// Guard: readPos past grain boundary → envelope is zero
+	if (v.readPos >= v.grainLenSamples || v.readPos < 0.0f)
 		return 0.0f;
 
 	// Tukey-windowed envelope with configurable taper fraction
