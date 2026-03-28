@@ -1,0 +1,35 @@
+# Visual Studio
+.vs/
+**/Builds/**
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
+*.vcxproj.*.user
+
+# Build outputs
+bin/
+Build/
+debug/
+release/
+*.exe
+*.dll
+*.obj
+*.lib
+*.pdb
+
+# JUCE
+JuceLibraryCode/
+JuceLibraryCode/*.o
+JuceLibraryCode/*.obj
+JuceLibraryCode/*.sdf
+
+# macOS
+.DS_Store
+
+# Other
+*.log
+*.vspscc
+_ReSharper*/
+/.vscode/
