@@ -22,6 +22,9 @@ public:
 	static constexpr const char* kParamInput      = "input";
 	static constexpr const char* kParamOutput     = "output";
 	static constexpr const char* kParamMix        = "mix";
+	static constexpr const char* kParamModeIn     = "mode_in";
+	static constexpr const char* kParamModeOut    = "mode_out";
+	static constexpr const char* kParamSumBus     = "sum_bus";
 	static constexpr const char* kParamSync       = "sync";
 	static constexpr const char* kParamMidi       = "midi";
 	static constexpr const char* kParamAuto       = "auto_grain";
@@ -96,6 +99,11 @@ public:
 	static constexpr float kMixMin     = 0.0f;
 	static constexpr float kMixMax     = 1.0f;
 	static constexpr float kMixDefault = 1.0f;
+
+	// Mode In / Mode Out / Sum Bus
+	static constexpr int   kModeInOutDefault = 0;   // 0=L+R  1=MID  2=SIDE
+	static constexpr int   kSumBusDefault    = 0;   // 0=ST   1=→M   2=→S
+	static constexpr float kSqrt2Over2       = 0.707106781f;
 
 	static constexpr float kEnvGraTauMin     = 0.0f;
 	static constexpr float kEnvGraTauMax     = 100.0f;
@@ -360,6 +368,9 @@ private:
 	std::atomic<float>* inputParam    = nullptr;
 	std::atomic<float>* outputParam   = nullptr;
 	std::atomic<float>* mixParam      = nullptr;
+	std::atomic<float>* modeInParam   = nullptr;
+	std::atomic<float>* modeOutParam  = nullptr;
+	std::atomic<float>* sumBusParam   = nullptr;
 	std::atomic<float>* syncParam     = nullptr;
 	std::atomic<float>* midiParam     = nullptr;
 	std::atomic<float>* autoParam     = nullptr;

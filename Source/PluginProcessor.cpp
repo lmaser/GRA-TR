@@ -151,6 +151,9 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	inputParam    = apvts.getRawParameterValue (kParamInput);
 	outputParam   = apvts.getRawParameterValue (kParamOutput);
 	mixParam      = apvts.getRawParameterValue (kParamMix);
+	modeInParam   = apvts.getRawParameterValue (kParamModeIn);
+	modeOutParam  = apvts.getRawParameterValue (kParamModeOut);
+	sumBusParam   = apvts.getRawParameterValue (kParamSumBus);
 	syncParam     = apvts.getRawParameterValue (kParamSync);
 	midiParam     = apvts.getRawParameterValue (kParamMidi);
 	autoParam     = apvts.getRawParameterValue (kParamAuto);
@@ -610,6 +613,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const float outputGainDb = loadAtomicOrDefault (outputParam, kOutputDefault);
 	const float mixValue     = loadAtomicOrDefault (mixParam, kMixDefault);
 
+	const int modeInVal  = loadIntParamOrDefault (modeInParam,  kModeInOutDefault);
+	const int modeOutVal = loadIntParamOrDefault (modeOutParam, kModeInOutDefault);
+	const int sumBusVal  = loadIntParamOrDefault (sumBusParam,  kSumBusDefault);
+
 	const float inputGain  = fastDecibelsToGain (inputGainDb);
 	const float outputGain = fastDecibelsToGain (outputGainDb);
 
@@ -792,8 +799,16 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		smoothedFormantRatio_ += (currentFormantRatio_ - smoothedFormantRatio_) * kGainSmoothStep;
 
 		// Read input
-		const float inL = (channelL != nullptr) ? channelL[i] * smoothedInputGain : 0.0f;
-		const float inR = (channelR != nullptr) ? channelR[i] * smoothedInputGain : inL;
+		float inL = (channelL != nullptr) ? channelL[i] * smoothedInputGain : 0.0f;
+		float inR = (channelR != nullptr) ? channelR[i] * smoothedInputGain : inL;
+
+		// Mode In: M/S encode input
+		if (numChannels >= 2 && modeInVal != 0)
+		{
+			const float l = inL, r = inR;
+			if (modeInVal == 1)      { const float mid  = (l + r) * kSqrt2Over2; inL = inR = mid; }
+			else /* modeInVal==2 */   { const float side = (l - r) * kSqrt2Over2; inL = inR = side; }
+		}
 
 		// Write to grain buffer (frozen when TRIGGER held = grain freeze/loop mode)
 		if (!triggerEnabled)
@@ -931,14 +946,40 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		filterWetSample (wetL, wetR);
 		if (chaosDelayEnabled_) applyChaosDelay (wetL, wetR);
 
-		// Mix dry/wet
+		// Mode Out: M/S encode wet output
+		if (numChannels >= 2 && modeOutVal != 0)
+		{
+			const float l = wetL, r = wetR;
+			if (modeOutVal == 1)      { const float mid  = (l + r) * kSqrt2Over2; wetL = wetR = mid; }
+			else /* modeOutVal==2 */   { const float side = (l - r) * kSqrt2Over2; wetL = wetR = side; }
+		}
+
+		// Mix dry/wet with Sum Bus routing
 		const float dryL = (channelL != nullptr) ? channelL[i] : 0.0f;
 		const float dryR = (channelR != nullptr) ? channelR[i] : dryL;
 
-		if (channelL != nullptr)
-			channelL[i] = dryL * (1.0f - smoothedMix) + wetL * smoothedMix * smoothedOutputGain;
-		if (channelR != nullptr)
-			channelR[i] = dryR * (1.0f - smoothedMix) + wetR * smoothedMix * smoothedOutputGain;
+		const float wL = wetL * smoothedMix * smoothedOutputGain;
+		const float wR = wetR * smoothedMix * smoothedOutputGain;
+		const float dL = dryL * (1.0f - smoothedMix);
+		const float dR = dryR * (1.0f - smoothedMix);
+
+		if (sumBusVal == 0) // ST: normal stereo
+		{
+			if (channelL != nullptr) channelL[i] = dL + wL;
+			if (channelR != nullptr) channelR[i] = dR + wR;
+		}
+		else if (sumBusVal == 1) // →M: wet collapsed to mono mid
+		{
+			const float midBus = (wL + wR) * 0.5f;
+			if (channelL != nullptr) channelL[i] = dL + midBus;
+			if (channelR != nullptr) channelR[i] = dR + midBus;
+		}
+		else // →S: wet collapsed to side
+		{
+			const float sideBus = (wL - wR) * 0.5f;
+			if (channelL != nullptr) channelL[i] = dL + sideBus;
+			if (channelR != nullptr) channelR[i] = dR - sideBus;
+		}
 	}
 
 	// ── Pan (equal-power, stereo only) ──
@@ -1097,6 +1138,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamMix, "Mix",
 		juce::NormalisableRange<float> (kMixMin, kMixMax, 0.0f, 1.0f), kMixDefault));
+
+	params.push_back (std::make_unique<juce::AudioParameterChoice> (
+		kParamModeIn, "Mode In", juce::StringArray { "L+R", "MID", "SIDE" }, kModeInOutDefault));
+	params.push_back (std::make_unique<juce::AudioParameterChoice> (
+		kParamModeOut, "Mode Out", juce::StringArray { "L+R", "MID", "SIDE" }, kModeInOutDefault));
+	params.push_back (std::make_unique<juce::AudioParameterChoice> (
+		kParamSumBus, "Sum Bus", juce::StringArray { "ST", u8"\u2192M", u8"\u2192S" }, kSumBusDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamSync, "Sync", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamMidi, "MIDI", false));

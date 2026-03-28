@@ -144,6 +144,10 @@ private:
     BarSlider panSlider;
     BarSlider mixSlider;
 
+    juce::ComboBox modeInCombo;
+    juce::ComboBox modeOutCombo;
+    juce::ComboBox sumBusCombo;
+
     juce::ToggleButton syncButton;
     juce::ToggleButton midiButton;
     juce::ToggleButton autoButton;
@@ -172,6 +176,11 @@ private:
     std::unique_ptr<SliderAttachment> tiltAttachment;
     std::unique_ptr<SliderAttachment> panAttachment;
     std::unique_ptr<SliderAttachment> mixAttachment;
+
+    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    std::unique_ptr<ComboBoxAttachment> modeInAttachment;
+    std::unique_ptr<ComboBoxAttachment> modeOutAttachment;
+    std::unique_ptr<ComboBoxAttachment> sumBusAttachment;
 
     std::unique_ptr<ButtonAttachment> syncAttachment;
     std::unique_ptr<ButtonAttachment> midiAttachment;
@@ -208,6 +217,7 @@ private:
         int betweenSlidersAndButtons = 0;
         int bottomMargin = 0;
         int box = 0;
+        int chaosRowY = 0;
         int btnRow1Y = 0;
         int btnRow2Y = 0;
         int btnRow3Y = 0;
@@ -267,6 +277,20 @@ private:
                     int x, int y, int width, int height,
                     bool isScrollbarVertical, int thumbStartPosition, int thumbSize,
                     bool isMouseOver, bool isMouseDown) override;
+
+        void drawComboBox (juce::Graphics& g, int width, int height,
+                           bool isButtonDown, int buttonX, int buttonY,
+                           int buttonW, int buttonH, juce::ComboBox& box) override;
+
+        void drawPopupMenuBackground (juce::Graphics& g, int width, int height) override;
+
+        juce::Font getComboBoxFont (juce::ComboBox& box) override;
+
+        void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override
+        {
+            label.setBounds (0, 0, box.getWidth(), box.getHeight());
+            label.setJustificationType (juce::Justification::centred);
+        }
 
         int getMinimumScrollbarThumbSize (juce::ScrollBar&) override { return 16; }
         int getScrollbarButtonSize (juce::ScrollBar&) override      { return 0; }
@@ -468,9 +492,9 @@ private:
     static constexpr double kDefaultTilt = (double) GRATRAudioProcessor::kTiltDefault;
 
     static constexpr int kMinW = 360;
-    static constexpr int kMinH = 540;
+    static constexpr int kMinH = 660;
     static constexpr int kMaxW = 800;
-    static constexpr int kMaxH = 640;
+    static constexpr int kMaxH = 760;
 
     static constexpr int kLayoutVerticalBiasPx = 10;
 
