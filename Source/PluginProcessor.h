@@ -248,6 +248,8 @@ private:
 	// Auto-trigger phase accumulator (counts samples until next grain)
 	float autoPhaseCounter_   = 0.0f;
 	float targetGrainLen_     = 0.0f;     // current target grain length in samples
+	float smoothedGrainLen_   = 0.0f;     // EMA-smoothed grain length for MIDI glide
+	float grainLenGlideStep_  = 1.0f;     // EMA step (1-coeff) for grain length smoothing
 	bool  prevTriggerState_   = false;    // edge-detect for TRIGGER toggle
 	bool  lastAutoEnabled_    = false;
 
@@ -331,6 +333,12 @@ private:
 	juce::Random chaosFRng_;
 
 	float chaosParamSmoothCoeff_ = 0.999f;
+
+	// Precomputed sampleRate-dependent smooth coefficients (set in prepareToPlay)
+	float cachedChaosDSmoothCoeff_       = 0.999f;
+	float cachedChaosGSmoothCoeff_       = 0.999f;
+	float cachedChaosFSmoothCoeff_       = 0.999f;
+	float cachedChaosParamSmoothCoeff_   = 0.999f;
 
 	static constexpr int kChaosDelayBufLen = 1024;
 	float chaosDelayBuf_[2][kChaosDelayBufLen] = {};
