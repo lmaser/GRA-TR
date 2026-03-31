@@ -574,7 +574,7 @@ void GRATRAudioProcessorEditor::FilterBarComponent::mouseDoubleClick (const juce
 GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
 : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    const std::array<BarSlider*, 10> barSliders { &timeSlider, &modSlider, &pitchSlider, &formantSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider };
+    const std::array<BarSlider*, 11> barSliders { &timeSlider, &modSlider, &pitchSlider, &formantSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider, &limThresholdSlider };
 
     useCustomPalette = audioProcessor.getUiUseCustomPalette();
     crtEnabled = audioProcessor.getUiCrtEnabled();
@@ -633,6 +633,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     tiltSlider.setNumDecimalPlacesToDisplay (1);
     panSlider.setNumDecimalPlacesToDisplay (1);
     mixSlider.setNumDecimalPlacesToDisplay (1);
+    limThresholdSlider.setNumDecimalPlacesToDisplay (1);
 
     // IO sliders start hidden (collapsible section)
     inputSlider.setVisible (false);
@@ -640,6 +641,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     tiltSlider.setVisible (false);
     panSlider.setVisible (false);
     mixSlider.setVisible (false);
+    limThresholdSlider.setVisible (false);
 
     filterBar_.setOwner (this);
     filterBar_.setScheme (activeScheme);
@@ -751,6 +753,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     bindSlider (tiltAttachment, GRATRAudioProcessor::kParamTilt, tiltSlider, kDefaultTilt);
     bindSlider (panAttachment, GRATRAudioProcessor::kParamPan, panSlider, 0.5);
     bindSlider (mixAttachment, GRATRAudioProcessor::kParamMix, mixSlider, kDefaultMix);
+    bindSlider (limThresholdAttachment, GRATRAudioProcessor::kParamLimThreshold, limThresholdSlider, kDefaultLimThreshold);
 
     // Mode In / Mode Out / Sum Bus combos
     {
@@ -775,13 +778,23 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
         sumBusCombo.setLookAndFeel (&lnf);
         sumBusCombo.setVisible (false);
 
+        addAndMakeVisible (limModeCombo);
+        limModeCombo.addItem ("NONE", 1);
+        limModeCombo.addItem ("WET",  2);
+        limModeCombo.addItem ("GLOBAL", 3);
+        limModeCombo.setJustificationType (juce::Justification::centred);
+        limModeCombo.setLookAndFeel (&lnf);
+        limModeCombo.setVisible (false);
+
         modeInAttachment  = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamModeIn,  modeInCombo);
         modeOutAttachment = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamModeOut, modeOutCombo);
         sumBusAttachment  = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamSumBus,  sumBusCombo);
+        limModeAttachment = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamLimMode, limModeCombo);
     }
 
     // Disable numeric popup for STYLE (slider-only operation)
     modeSlider.setAllowNumericPopup (false);
+    limThresholdSlider.setAllowNumericPopup (false);
 
     auto bindButton = [&] (std::unique_ptr<ButtonAttachment>& attachment,
                            const char* paramId,
@@ -844,7 +857,7 @@ GRATRAudioProcessorEditor::~GRATRAudioProcessorEditor()
     dismissEditorOwnedModalPrompts (lnf);
     setPromptOverlayActive (false);
 
-    const std::array<BarSlider*, 10> barSliders { &timeSlider, &modSlider, &pitchSlider, &formantSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider };
+    const std::array<BarSlider*, 11> barSliders { &timeSlider, &modSlider, &pitchSlider, &formantSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider, &limThresholdSlider };
     for (auto* slider : barSliders)
         slider->removeListener (this);
 
@@ -854,6 +867,7 @@ GRATRAudioProcessorEditor::~GRATRAudioProcessorEditor()
     modeInCombo.setLookAndFeel (nullptr);
     modeOutCombo.setLookAndFeel (nullptr);
     sumBusCombo.setLookAndFeel (nullptr);
+    limModeCombo.setLookAndFeel (nullptr);
 
     setLookAndFeel (nullptr);
 }
@@ -1195,6 +1209,8 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
     const auto oldTiltShort     = cachedTiltTextShort;
     const auto oldPanFull       = cachedPanTextFull;
     const auto oldPanShort      = cachedPanTextShort;
+    const auto oldLimFull       = cachedLimThresholdTextFull;
+    const auto oldLimShort      = cachedLimThresholdTextShort;
 
     cachedTimeTextFull = getTimeText();
     cachedTimeTextShort = getTimeTextShort();
@@ -1261,6 +1277,16 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
     cachedPanTextFull  = getPanText();
     cachedPanTextShort = getPanTextShort();
 
+    cachedLimThresholdTextFull  = getLimThresholdText();
+    cachedLimThresholdTextShort = getLimThresholdTextShort();
+    {
+        const float limVal = (float) limThresholdSlider.getValue();
+        if (std::abs (limVal) < 0.05f)
+            cachedLimThresholdIntOnly = "0dB";
+        else
+            cachedLimThresholdIntOnly = juce::String ((int) limVal) + "dB";
+    }
+
     {
         const float panVal = (float) panSlider.getValue();
         const int panPct = (int) std::lround (panVal * 100.0);
@@ -1291,7 +1317,9 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
                       || oldTiltFull      != cachedTiltTextFull
                       || oldTiltShort     != cachedTiltTextShort
                       || oldPanFull       != cachedPanTextFull
-                      || oldPanShort      != cachedPanTextShort;
+                      || oldPanShort      != cachedPanTextShort
+                      || oldLimFull       != cachedLimThresholdTextFull
+                      || oldLimShort      != cachedLimThresholdTextShort;
 
     return changed;
 }
@@ -1510,6 +1538,22 @@ juce::String GRATRAudioProcessorEditor::getPanTextShort() const
     return "R" + juce::String (pct);
 }
 
+juce::String GRATRAudioProcessorEditor::getLimThresholdText() const
+{
+    const float db = (float) limThresholdSlider.getValue();
+    if (std::abs (db) < 0.05f)
+        return "0 dB LIMIT";
+    return juce::String (db, 1) + " dB LIMIT";
+}
+
+juce::String GRATRAudioProcessorEditor::getLimThresholdTextShort() const
+{
+    const float db = (float) limThresholdSlider.getValue();
+    if (std::abs (db) < 0.05f)
+        return "0 dB LIM";
+    return juce::String (db, 1) + " dB LIM";
+}
+
 //========================== Legend width constants ==========================
 namespace
 {
@@ -1544,6 +1588,10 @@ namespace
     constexpr const char* kMixLegendFull   = "100% MIX";
     constexpr const char* kMixLegendShort  = "100% MX";
     constexpr const char* kMixLegendInt    = "100%";
+
+    constexpr const char* kLimLegendFull   = "-36.0 dB LIMIT";
+    constexpr const char* kLimLegendShort  = "-36.0 dB LIM";
+    constexpr const char* kLimLegendInt    = "-36dB";
 
     constexpr int kValueAreaHeightPx = 44;
     constexpr int kValueAreaRightMarginPx = 24;
@@ -3628,16 +3676,16 @@ GRATRAudioProcessorEditor::buildVerticalLayout (int editorH, int biasY, bool ioE
     m.btnRow2Y = m.btnRow3Y - m.btnRowGap - m.box;
     m.btnRow1Y = m.btnRow2Y - m.btnRowGap - m.box;
 
-    // When IO is expanded, chaos checkboxes sit as a 4th button row above btnRow1
-    m.chaosRowY = ioExpanded ? (m.btnRow1Y - m.btnRowGap - m.box) : 0;
+    // When IO is expanded, buttons are hidden and chaos sits at the bottom
+    m.chaosRowY = ioExpanded ? (editorH - m.bottomMargin - m.box) : 0;
 
     const int sliderBottomRef = ioExpanded ? m.chaosRowY : m.btnRow1Y;
     m.availableForSliders = juce::jmax (40, sliderBottomRef - m.betweenSlidersAndButtons - m.topMargin);
 
-    // Bars below toggle: 7 IO bars when expanded (IN/OUT/TILT/FILTER/PAN/MIX/MODE_ROW),
+    // Bars below toggle: 8 IO bars when expanded (IN/OUT/TILT/FILTER/PAN/MIX/LIM/MODE_ROW),
     // 5 main bars when collapsed (TIME/MOD/PITCH/FORMANT/STYLE).
-    const int numSliders = ioExpanded ? 7 : 5;
-    const int numGaps    = ioExpanded ? 7 : 5;
+    const int numSliders = ioExpanded ? 8 : 5;
+    const int numGaps    = ioExpanded ? 8 : 5;
 
     m.toggleBarH = 20;
     const int spaceForScale = juce::jmax (40, m.availableForSliders - m.toggleBarH);
@@ -3729,6 +3777,20 @@ void GRATRAudioProcessorEditor::updateCachedLayout()
         cachedPanValueArea_ = {};
     }
 
+    if (limThresholdSlider.isVisible())
+    {
+        const auto& bb = limThresholdSlider.getBounds();
+        const int valueX = bb.getRight() + cachedHLayout_.valuePad;
+        const int maxW = juce::jmax (0, getWidth() - valueX - kValueAreaRightMarginPx);
+        const int vw   = juce::jmin (cachedHLayout_.valueW, maxW);
+        const int y    = bb.getCentreY() - (kValueAreaHeightPx / 2);
+        cachedLimThresholdValueArea_ = { valueX, y, juce::jmax (0, vw), kValueAreaHeightPx };
+    }
+    else
+    {
+        cachedLimThresholdValueArea_ = {};
+    }
+
     if (chaosFilterButton.isVisible())
         cachedChaosArea_ = chaosFilterButton.getBounds().getUnion (chaosDelayButton.getBounds());
     else
@@ -3786,8 +3848,12 @@ int GRATRAudioProcessorEditor::getTargetValueColumnWidth() const
                                     juce::jmax (stringWidth (font, kMixLegendShort),
                                                 stringWidth (font, kMixLegendInt)));
 
+    const int limMaxW = juce::jmax (stringWidth (font, kLimLegendFull),
+                                    juce::jmax (stringWidth (font, kLimLegendShort),
+                                                stringWidth (font, kLimLegendInt)));
+
     const int maxW = juce::jmax (juce::jmax (juce::jmax (timeMaxW, pitchMaxW), juce::jmax (modeMaxW, modMaxW)),
-                                 juce::jmax (juce::jmax (inputMaxW, outputMaxW), juce::jmax (mixMaxW, formantMaxW)));
+                                 juce::jmax (juce::jmax (inputMaxW, outputMaxW), juce::jmax (mixMaxW, juce::jmax (formantMaxW, limMaxW))));
 
     const int desired = maxW + 16;
     const int minW = 90;
@@ -4252,7 +4318,10 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
         if (panSlider.isVisible() && cachedPanValueArea_.getWidth() > 0)
             drawLegendForMode (cachedPanValueArea_, cachedPanTextFull, cachedPanTextShort, cachedPanTextShort);
 
-        // Mode In / Mode Out / Sum Bus labels above combos
+        if (limThresholdSlider.isVisible() && cachedLimThresholdValueArea_.getWidth() > 0)
+            drawLegendForMode (cachedLimThresholdValueArea_, cachedLimThresholdTextFull, cachedLimThresholdTextShort, cachedLimThresholdIntOnly);
+
+        // Mode In / Mode Out / Sum Bus / Limiter Mode labels above combos
         if (modeInCombo.isVisible())
         {
             const auto font = juce::Font (juce::FontOptions (11.0f).withStyle ("Bold"));
@@ -4269,6 +4338,7 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
             drawComboLabel (modeInCombo,  "MODE IN",  "IN");
             drawComboLabel (modeOutCombo, "MODE OUT", "OUT");
             drawComboLabel (sumBusCombo,  "SUM BUS",  "SUM");
+            drawComboLabel (limModeCombo, "LIMIT",    "LIM");
         }
 
         g.setFont (kBoldFont40());
@@ -4292,6 +4362,8 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
         const auto& labelFont = kBoldFont40();
         g.setFont (labelFont);
 
+        if (reverseButton.isVisible())
+        {
         // Row 1: RVS + ENV GRA
         const int rvsCR    = envGraButton.getX() - kToggleLegendCollisionPadPx;
         const int envGraCR = getWidth() - kToggleLegendCollisionPadPx;
@@ -4335,6 +4407,7 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
         // Row 3: SYNC + MIDI
         drawToggleLegend (getSyncLabelArea(),    syncLabel,   syncCR);
         drawToggleLegend (getMidiLabelArea(),    midiLabel,   midiCR);
+        }
     }
 
     g.setColour (scheme.text);
@@ -4422,26 +4495,28 @@ void GRATRAudioProcessorEditor::resized()
 
     if (ioSectionExpanded_)
     {
-        // Expanded: [toggle bar] → INPUT, OUTPUT, TILT, FILTER, PAN, MIX, CHAOS; main params hidden
+        // Expanded: [toggle bar] → INPUT, OUTPUT, TILT, FILTER, PAN, MIX, LIM, MODE combos, CHAOS; main params hidden
         inputSlider.setBounds  (horizontalLayout.leftX, mainTop + 0 * step, horizontalLayout.barW, verticalLayout.barH);
         outputSlider.setBounds (horizontalLayout.leftX, mainTop + 1 * step, horizontalLayout.barW, verticalLayout.barH);
         tiltSlider.setBounds   (horizontalLayout.leftX, mainTop + 2 * step, horizontalLayout.barW, verticalLayout.barH);
         filterBar_.setBounds   (horizontalLayout.leftX, mainTop + 3 * step, horizontalLayout.barW, verticalLayout.barH);
         panSlider.setBounds    (horizontalLayout.leftX, mainTop + 4 * step, horizontalLayout.barW, verticalLayout.barH);
         mixSlider.setBounds    (horizontalLayout.leftX, mainTop + 5 * step, horizontalLayout.barW, verticalLayout.barH);
+        limThresholdSlider.setBounds (horizontalLayout.leftX, mainTop + 6 * step, horizontalLayout.barW, verticalLayout.barH);
 
         const int modeRowPad = 10;
 
-        // Mode In / Mode Out / Sum Bus — 3 combos on row 6
+        // Mode In / Mode Out / Sum Bus / Limiter Mode — 4 combos on row 7
         {
-            const int modeY = mainTop + 6 * step + modeRowPad;
+            const int modeY = mainTop + 7 * step + modeRowPad;
             const int comboGap = 4;
             const int totalW = horizontalLayout.barW + horizontalLayout.valuePad + horizontalLayout.valueW;
-            const int comboW = (totalW - comboGap * 2) / 3;
+            const int comboW = (totalW - comboGap * 3) / 4;
             const int comboH = juce::jmax (24, verticalLayout.barH);
             modeInCombo.setBounds  (horizontalLayout.leftX,                           modeY, comboW, comboH);
-            modeOutCombo.setBounds (horizontalLayout.leftX + comboW + comboGap,        modeY, comboW, comboH);
+            modeOutCombo.setBounds (horizontalLayout.leftX + (comboW + comboGap),      modeY, comboW, comboH);
             sumBusCombo.setBounds  (horizontalLayout.leftX + (comboW + comboGap) * 2,  modeY, comboW, comboH);
+            limModeCombo.setBounds (horizontalLayout.leftX + (comboW + comboGap) * 3,  modeY, comboW, comboH);
         }
 
         const int chaosY = verticalLayout.chaosRowY;
@@ -4460,13 +4535,24 @@ void GRATRAudioProcessorEditor::resized()
         filterBar_.setVisible (true);
         panSlider.setVisible (true);
         mixSlider.setVisible (true);
+        limThresholdSlider.setVisible (true);
         modeInCombo.setVisible (true);
         modeOutCombo.setVisible (true);
         sumBusCombo.setVisible (true);
+        limModeCombo.setVisible (true);
         chaosFilterButton.setVisible (true);
         chaosFilterDisplay.setVisible (true);
         chaosDelayButton.setVisible (true);
         chaosDelayDisplay.setVisible (true);
+
+        reverseButton.setVisible (false);
+        envGraButton.setVisible (false);
+        envGraDisplay.setVisible (false);
+        autoButton.setVisible (false);
+        triggerButton.setVisible (false);
+        syncButton.setVisible (false);
+        midiButton.setVisible (false);
+        midiChannelDisplay.setVisible (false);
 
         timeSlider.setBounds (0, 0, 0, 0);
         modSlider.setBounds (0, 0, 0, 0);
@@ -4501,6 +4587,7 @@ void GRATRAudioProcessorEditor::resized()
         mixSlider.setBounds (0, 0, 0, 0);
         panSlider.setBounds (0, 0, 0, 0);
         filterBar_.setBounds (0, 0, 0, 0);
+        limThresholdSlider.setBounds (0, 0, 0, 0);
 
         inputSlider.setVisible (false);
         outputSlider.setVisible (false);
@@ -4508,6 +4595,7 @@ void GRATRAudioProcessorEditor::resized()
         mixSlider.setVisible (false);
         panSlider.setVisible (false);
         filterBar_.setVisible (false);
+        limThresholdSlider.setVisible (false);
         chaosFilterButton.setVisible (false);
         chaosFilterDisplay.setVisible (false);
         chaosDelayButton.setVisible (false);
@@ -4515,6 +4603,16 @@ void GRATRAudioProcessorEditor::resized()
         modeInCombo.setVisible (false);
         modeOutCombo.setVisible (false);
         sumBusCombo.setVisible (false);
+        limModeCombo.setVisible (false);
+
+        reverseButton.setVisible (true);
+        envGraButton.setVisible (true);
+        envGraDisplay.setVisible (true);
+        autoButton.setVisible (true);
+        triggerButton.setVisible (true);
+        syncButton.setVisible (true);
+        midiButton.setVisible (true);
+        midiChannelDisplay.setVisible (true);
     }
 
     // Button area: 3x2 grid

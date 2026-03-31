@@ -154,6 +154,8 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	modeInParam   = apvts.getRawParameterValue (kParamModeIn);
 	modeOutParam  = apvts.getRawParameterValue (kParamModeOut);
 	sumBusParam   = apvts.getRawParameterValue (kParamSumBus);
+	limThresholdParam = apvts.getRawParameterValue (kParamLimThreshold);
+	limModeParam      = apvts.getRawParameterValue (kParamLimMode);
 	syncParam     = apvts.getRawParameterValue (kParamSync);
 	midiParam     = apvts.getRawParameterValue (kParamMidi);
 	autoParam     = apvts.getRawParameterValue (kParamAuto);
@@ -317,6 +319,16 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	lastPan_ = 0.5f;
 	lastPanLeft_  = 0.70710678f;
 	lastPanRight_ = 0.70710678f;
+
+	// Limiter state reset
+	limEnv1_[0] = limEnv1_[1] = kLimFloor;
+	limEnv2_[0] = limEnv2_[1] = kLimFloor;
+	{
+		const float sr = static_cast<float> (currentSampleRate);
+		limAtt1_ = std::exp (-1.0f / (sr * 0.002f));   // 2 ms attack
+		limRel1_ = std::exp (-1.0f / (sr * 0.010f));   // 10 ms release
+		limRel2_ = std::exp (-1.0f / (sr * 0.100f));   // 100 ms release
+	}
 }
 
 void GRATRAudioProcessor::releaseResources()
@@ -627,6 +639,12 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	const float inputGain  = fastDecibelsToGain (inputGainDb);
 	const float outputGain = fastDecibelsToGain (outputGainDb);
+
+	// ── Limiter ──
+	const int limMode = loadIntParamOrDefault (limModeParam, kLimModeDefault);
+	const float limThreshLin = (limMode != 0)
+		? fastDecibelsToGain (loadAtomicOrDefault (limThresholdParam, kLimThresholdDefault))
+		: 1.0f;
 
 	// Pitch ratio & formant ratio (targets — smoothed per-sample below)
 	currentPitchRatio_   = std::exp2 (pitchSemi / 12.0f);
@@ -1003,8 +1021,12 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		const float dryL = (channelL != nullptr) ? channelL[i] : 0.0f;
 		const float dryR = (channelR != nullptr) ? channelR[i] : dryL;
 
-		const float wL = wetL * smoothedMix * smoothedOutputGain;
-		const float wR = wetR * smoothedMix * smoothedOutputGain;
+		float wL = wetL * smoothedOutputGain;
+		float wR = wetR * smoothedOutputGain;
+		if (limMode == 1)
+			applyLimiterSample (wL, wR, limThreshLin);
+		wL *= smoothedMix;
+		wR *= smoothedMix;
 		const float dL = dryL * (1.0f - smoothedMix);
 		const float dR = dryR * (1.0f - smoothedMix);
 
@@ -1042,6 +1064,29 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		{
 			juce::FloatVectorOperations::multiply (buffer.getWritePointer (0), lastPanLeft_,  numSamples);
 			juce::FloatVectorOperations::multiply (buffer.getWritePointer (1), lastPanRight_, numSamples);
+		}
+	}
+
+	// ── Transparent Peak Limiter (GLOBAL: after pan, before safety) ──
+	if (limMode == 2)
+	{
+		float* left  = buffer.getWritePointer (0);
+		float* right = numChannels >= 2 ? buffer.getWritePointer (1) : nullptr;
+		if (right != nullptr)
+			applyLimiter (left, right, numSamples, limThreshLin);
+		else
+		{
+			float dummy[2048];
+			int remaining = numSamples;
+			int offset = 0;
+			while (remaining > 0)
+			{
+				const int chunk = juce::jmin (remaining, 2048);
+				std::memset (dummy, 0, sizeof (float) * (size_t) chunk);
+				applyLimiter (left + offset, dummy, chunk, limThreshLin);
+				remaining -= chunk;
+				offset += chunk;
+			}
 		}
 	}
 
@@ -1245,6 +1290,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamChaosSpdFilter, "Chaos Filter Speed",
 		juce::NormalisableRange<float> (kChaosSpdMin, kChaosSpdMax, 0.01f, 0.3f), kChaosSpdDefault));
+
+	// Limiter
+	params.push_back (std::make_unique<juce::AudioParameterFloat> (
+		kParamLimThreshold, "Lim Threshold",
+		juce::NormalisableRange<float> (kLimThresholdMin, kLimThresholdMax, 0.1f), kLimThresholdDefault));
+	params.push_back (std::make_unique<juce::AudioParameterChoice> (
+		kParamLimMode, "Lim Mode", juce::StringArray { "NONE", "WET", "GLOBAL" }, kLimModeDefault));
 
 	// UI state (hidden from automation)
 	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiWidth, "UI Width", 360, 1600, 360));

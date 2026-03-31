@@ -143,10 +143,12 @@ private:
     BarSlider tiltSlider;
     BarSlider panSlider;
     BarSlider mixSlider;
+    BarSlider limThresholdSlider;
 
     juce::ComboBox modeInCombo;
     juce::ComboBox modeOutCombo;
     juce::ComboBox sumBusCombo;
+    juce::ComboBox limModeCombo;
 
     juce::ToggleButton syncButton;
     juce::ToggleButton midiButton;
@@ -176,11 +178,13 @@ private:
     std::unique_ptr<SliderAttachment> tiltAttachment;
     std::unique_ptr<SliderAttachment> panAttachment;
     std::unique_ptr<SliderAttachment> mixAttachment;
+    std::unique_ptr<SliderAttachment> limThresholdAttachment;
 
     using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     std::unique_ptr<ComboBoxAttachment> modeInAttachment;
     std::unique_ptr<ComboBoxAttachment> modeOutAttachment;
     std::unique_ptr<ComboBoxAttachment> sumBusAttachment;
+    std::unique_ptr<ComboBoxAttachment> limModeAttachment;
 
     std::unique_ptr<ButtonAttachment> syncAttachment;
     std::unique_ptr<ButtonAttachment> midiAttachment;
@@ -401,6 +405,9 @@ private:
     juce::String getPanText() const;
     juce::String getPanTextShort() const;
 
+    juce::String getLimThresholdText() const;
+    juce::String getLimThresholdTextShort() const;
+
     int getTargetValueColumnWidth() const;
 
     void sliderValueChanged (juce::Slider* slider) override;
@@ -452,6 +459,9 @@ private:
     juce::String cachedMixTextShort;
     juce::String cachedTiltTextFull;
     juce::String cachedTiltTextShort;
+    juce::String cachedLimThresholdTextFull;
+    juce::String cachedLimThresholdTextShort;
+    juce::String cachedLimThresholdIntOnly;
 
     juce::String cachedTimeIntOnly;
     juce::String cachedPitchIntOnly;
@@ -480,6 +490,7 @@ private:
     std::array<juce::Rectangle<int>, 10> cachedValueAreas_;
     juce::Rectangle<int> cachedFilterValueArea_;
     juce::Rectangle<int> cachedPanValueArea_;
+    juce::Rectangle<int> cachedLimThresholdValueArea_;
     juce::Rectangle<int> cachedTiltValueArea_;
     juce::Rectangle<int> cachedToggleBarArea_;
     juce::Rectangle<int> cachedChaosArea_;
@@ -490,6 +501,7 @@ private:
     static constexpr double kDefaultInput = (double) GRATRAudioProcessor::kInputDefault;
     static constexpr double kDefaultOutput = (double) GRATRAudioProcessor::kOutputDefault;
     static constexpr double kDefaultTilt = (double) GRATRAudioProcessor::kTiltDefault;
+    static constexpr double kDefaultLimThreshold = 0.0;
 
     static constexpr int kMinW = 360;
     static constexpr int kMinH = 660;
