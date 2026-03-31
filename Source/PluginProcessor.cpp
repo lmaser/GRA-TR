@@ -156,6 +156,8 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	sumBusParam   = apvts.getRawParameterValue (kParamSumBus);
 	limThresholdParam = apvts.getRawParameterValue (kParamLimThreshold);
 	limModeParam      = apvts.getRawParameterValue (kParamLimMode);
+	invPolParam       = apvts.getRawParameterValue (kParamInvPol);
+	invStrParam       = apvts.getRawParameterValue (kParamInvStr);
 	syncParam     = apvts.getRawParameterValue (kParamSync);
 	midiParam     = apvts.getRawParameterValue (kParamMidi);
 	autoParam     = apvts.getRawParameterValue (kParamAuto);
@@ -636,6 +638,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const int modeInVal  = loadIntParamOrDefault (modeInParam,  kModeInOutDefault);
 	const int modeOutVal = loadIntParamOrDefault (modeOutParam, kModeInOutDefault);
 	const int sumBusVal  = loadIntParamOrDefault (sumBusParam,  kSumBusDefault);
+	const int invPol     = loadIntParamOrDefault (invPolParam,  kInvPolDefault);
+	const int invStr     = loadIntParamOrDefault (invStrParam,  kInvStrDefault);
 
 	const float inputGain  = fastDecibelsToGain (inputGainDb);
 	const float outputGain = fastDecibelsToGain (outputGainDb);
@@ -1025,6 +1029,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		float wR = wetR * smoothedOutputGain;
 		if (limMode == 1)
 			applyLimiterSample (wL, wR, limThreshLin);
+
+		// Invert Polarity / Stereo (WET mode: after Limiter WET)
+		if (invPol == 1) { wL = -wL; wR = -wR; }
+		if (invStr == 1 && numChannels >= 2) std::swap (wL, wR);
+
 		wL *= smoothedMix;
 		wR *= smoothedMix;
 		const float dL = dryL * (1.0f - smoothedMix);
@@ -1088,6 +1097,18 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				offset += chunk;
 			}
 		}
+	}
+
+	// ── Invert Polarity / Stereo (GLOBAL mode: after Limiter GLOBAL, before safety) ──
+	if (invPol == 2)
+		for (int ch = 0; ch < numChannels; ++ch)
+			juce::FloatVectorOperations::multiply (buffer.getWritePointer (ch), -1.0f, numSamples);
+	if (invStr == 2 && numChannels >= 2)
+	{
+		float* sL = buffer.getWritePointer (0);
+		float* sR = buffer.getWritePointer (1);
+		for (int n = 0; n < numSamples; ++n)
+			std::swap (sL[n], sR[n]);
 	}
 
 	// Safety hard-limiter
@@ -1235,6 +1256,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 		kParamModeOut, "Mode Out", juce::StringArray { "L+R", "MID", "SIDE" }, kModeInOutDefault));
 	params.push_back (std::make_unique<juce::AudioParameterChoice> (
 		kParamSumBus, "Sum Bus", juce::StringArray { "ST", u8"\u2192M", u8"\u2192S" }, kSumBusDefault));
+
+	// Invert Polarity / Invert Stereo
+	params.push_back (std::make_unique<juce::AudioParameterChoice> (
+		kParamInvPol, "Invert Polarity",
+		juce::StringArray { "NONE", "WET", "GLOBAL" }, kInvPolDefault));
+	params.push_back (std::make_unique<juce::AudioParameterChoice> (
+		kParamInvStr, "Invert Stereo",
+		juce::StringArray { "NONE", "WET", "GLOBAL" }, kInvStrDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamSync, "Sync", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamMidi, "MIDI", false));

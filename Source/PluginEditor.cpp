@@ -786,10 +786,28 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
         limModeCombo.setLookAndFeel (&lnf);
         limModeCombo.setVisible (false);
 
+        // Invert Polarity / Invert Stereo combos
+        {
+            auto setupInvCombo = [this] (juce::ComboBox& combo)
+            {
+                addAndMakeVisible (combo);
+                combo.addItem ("NONE",   1);
+                combo.addItem ("WET",    2);
+                combo.addItem ("GLOBAL", 3);
+                combo.setJustificationType (juce::Justification::centred);
+                combo.setLookAndFeel (&lnf);
+                combo.setVisible (false);
+            };
+            setupInvCombo (invPolCombo);
+            setupInvCombo (invStrCombo);
+        }
+
         modeInAttachment  = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamModeIn,  modeInCombo);
         modeOutAttachment = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamModeOut, modeOutCombo);
         sumBusAttachment  = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamSumBus,  sumBusCombo);
         limModeAttachment = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamLimMode, limModeCombo);
+        invPolAttachment  = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamInvPol,  invPolCombo);
+        invStrAttachment  = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamInvStr,  invStrCombo);
     }
 
     // Disable numeric popup for STYLE (slider-only operation)
@@ -868,6 +886,8 @@ GRATRAudioProcessorEditor::~GRATRAudioProcessorEditor()
     modeOutCombo.setLookAndFeel (nullptr);
     sumBusCombo.setLookAndFeel (nullptr);
     limModeCombo.setLookAndFeel (nullptr);
+    invPolCombo.setLookAndFeel (nullptr);
+    invStrCombo.setLookAndFeel (nullptr);
 
     setLookAndFeel (nullptr);
 }
@@ -885,6 +905,13 @@ void GRATRAudioProcessorEditor::applyActivePalette()
     activeScheme = scheme;
     lnf.setScheme (activeScheme);
     filterBar_.setScheme (activeScheme);
+
+    for (auto* combo : { &modeInCombo, &modeOutCombo, &sumBusCombo, &limModeCombo, &invPolCombo, &invStrCombo })
+    {
+        combo->setColour (juce::ComboBox::textColourId,       scheme.text);
+        combo->setColour (juce::ComboBox::backgroundColourId, scheme.bg);
+        combo->setColour (juce::ComboBox::outlineColourId,    scheme.outline);
+    }
 }
 
 void GRATRAudioProcessorEditor::applyCrtState (bool enabled)
@@ -3682,10 +3709,10 @@ GRATRAudioProcessorEditor::buildVerticalLayout (int editorH, int biasY, bool ioE
     const int sliderBottomRef = ioExpanded ? m.chaosRowY : m.btnRow1Y;
     m.availableForSliders = juce::jmax (40, sliderBottomRef - m.betweenSlidersAndButtons - m.topMargin);
 
-    // Bars below toggle: 8 IO bars when expanded (IN/OUT/TILT/FILTER/PAN/MIX/LIM/MODE_ROW),
+    // Bars below toggle: 9 IO bars when expanded (IN/OUT/TILT/FILTER/PAN/MIX/LIM/MODE_ROW/INV_ROW),
     // 5 main bars when collapsed (TIME/MOD/PITCH/FORMANT/STYLE).
-    const int numSliders = ioExpanded ? 8 : 5;
-    const int numGaps    = ioExpanded ? 8 : 5;
+    const int numSliders = ioExpanded ? 9 : 5;
+    const int numGaps    = ioExpanded ? 9 : 5;
 
     m.toggleBarH = 20;
     const int spaceForScale = juce::jmax (40, m.availableForSliders - m.toggleBarH);
@@ -4325,6 +4352,7 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
         if (modeInCombo.isVisible())
         {
             const auto font = juce::Font (juce::FontOptions (11.0f).withStyle ("Bold"));
+            g.setColour (scheme.text);
             g.setFont (font);
             auto drawComboLabel = [&] (const juce::ComboBox& combo, const juce::String& full, const juce::String& shortTxt)
             {
@@ -4339,6 +4367,25 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
             drawComboLabel (modeOutCombo, "MODE OUT", "OUT");
             drawComboLabel (sumBusCombo,  "SUM BUS",  "SUM");
             drawComboLabel (limModeCombo, "LIMIT",    "LIM");
+        }
+
+        // Invert Polarity / Invert Stereo labels above combos
+        if (invPolCombo.isVisible())
+        {
+            const auto font = juce::Font (juce::FontOptions (11.0f).withStyle ("Bold"));
+            g.setColour (scheme.text);
+            g.setFont (font);
+            auto drawComboLabel = [&] (const juce::ComboBox& combo, const juce::String& full, const juce::String& shortTxt)
+            {
+                const auto area = combo.getBounds().withHeight (14).translated (0, -15);
+                const float comboW = (float) combo.getWidth();
+                juce::GlyphArrangement ga;
+                ga.addLineOfText (font, full, 0.0f, 0.0f);
+                const bool useShort = ga.getBoundingBox (0, -1, false).getWidth() > comboW;
+                g.drawText (useShort ? shortTxt : full, area, juce::Justification::centred);
+            };
+            drawComboLabel (invPolCombo, "INV POL", "POL");
+            drawComboLabel (invStrCombo, "INV STR", "STR");
         }
 
         g.setFont (kBoldFont40());
@@ -4519,6 +4566,17 @@ void GRATRAudioProcessorEditor::resized()
             limModeCombo.setBounds (horizontalLayout.leftX + (comboW + comboGap) * 3,  modeY, comboW, comboH);
         }
 
+        // Invert Polarity / Invert Stereo — 2 combos on row 8
+        {
+            const int invY = mainTop + 7 * step + modeRowPad + juce::jmax (24, verticalLayout.barH) + 18;
+            const int comboGap = 4;
+            const int totalW = horizontalLayout.barW + horizontalLayout.valuePad + horizontalLayout.valueW;
+            const int comboW = (totalW - comboGap) / 2;
+            const int comboH = juce::jmax (24, verticalLayout.barH);
+            invPolCombo.setBounds (horizontalLayout.leftX,                          invY, comboW, comboH);
+            invStrCombo.setBounds (horizontalLayout.leftX + (comboW + comboGap),    invY, comboW, comboH);
+        }
+
         const int chaosY = verticalLayout.chaosRowY;
         const int chaosH = verticalLayout.box;
         const int chaosRightX = horizontalLayout.leftX + horizontalLayout.barW + horizontalLayout.valuePad;
@@ -4540,6 +4598,8 @@ void GRATRAudioProcessorEditor::resized()
         modeOutCombo.setVisible (true);
         sumBusCombo.setVisible (true);
         limModeCombo.setVisible (true);
+        invPolCombo.setVisible (true);
+        invStrCombo.setVisible (true);
         chaosFilterButton.setVisible (true);
         chaosFilterDisplay.setVisible (true);
         chaosDelayButton.setVisible (true);
@@ -4604,6 +4664,8 @@ void GRATRAudioProcessorEditor::resized()
         modeOutCombo.setVisible (false);
         sumBusCombo.setVisible (false);
         limModeCombo.setVisible (false);
+        invPolCombo.setVisible (false);
+        invStrCombo.setVisible (false);
 
         reverseButton.setVisible (true);
         envGraButton.setVisible (true);
