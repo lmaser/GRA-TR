@@ -46,6 +46,14 @@ public:
 	static constexpr const char* kParamFilterHpOn    = "filter_hp_on";
 	static constexpr const char* kParamFilterLpOn    = "filter_lp_on";
 
+	// Mix Mode + Dry/Wet levels (SEND mode)
+	static constexpr const char* kParamMixMode  = "mix_mode";
+	static constexpr const char* kParamDryLevel = "dry_level";
+	static constexpr const char* kParamWetLevel = "wet_level";
+
+	// Filter position
+	static constexpr const char* kParamFilterPos = "filter_pos";
+
 	// Tilt / Pan
 	static constexpr const char* kParamTilt = "tilt";
 	static constexpr const char* kParamPan  = "pan";
@@ -64,6 +72,10 @@ public:
 	static constexpr float kLimThresholdMax     =   0.0f;
 	static constexpr float kLimThresholdDefault =   0.0f;
 	static constexpr int   kLimModeDefault      =   0;
+	static constexpr int   kMixModeDefault   = 0;   // 0=INSERT, 1=SEND
+	static constexpr float kDryLevelDefault  = 0.0f;
+	static constexpr float kWetLevelDefault  = 1.0f;
+	static constexpr int   kFilterPosDefault = 0;   // 0=POST, 1=PRE
 
 	static constexpr const char* kParamUiWidth    = "ui_width";
 	static constexpr const char* kParamUiHeight   = "ui_height";
@@ -280,6 +292,8 @@ private:
 	float smoothedInputGain  = 1.0f;
 	float smoothedOutputGain = 1.0f;
 	float smoothedMix        = 0.5f;
+	bool  filterPre_  = false;
+	bool  tiltPre_    = false;
 	// ── Wet-signal HP/LP filter state ─────────────────────────────
 	struct WetFilterChannelState
 	{
@@ -290,6 +304,8 @@ private:
 	WetFilterChannelState wetFilterState_[2];
 	WetFilterBiquadCoeffs hpCoeffs_[2];
 	WetFilterBiquadCoeffs lpCoeffs_[2];
+	WetFilterBiquadCoeffs hpCoeffsR_[2];      // per-section HP coeffs (R, stereo chaos)
+	WetFilterBiquadCoeffs lpCoeffsR_[2];      // per-section LP coeffs (R, stereo chaos)
 	float smoothedFilterHpFreq_ = kFilterHpFreqDefault;
 	float smoothedFilterLpFreq_ = kFilterLpFreqDefault;
 	float lastCalcHpFreq_ = -1.0f, lastCalcLpFreq_ = -1.0f;
@@ -305,6 +321,7 @@ private:
 	int   wetFilterNumSectionsHp_ = 0;
 	int   wetFilterNumSectionsLp_ = 0;
 	void  filterWetSample (float& wetL, float& wetR);
+	void  tiltWetSample   (float& wetL, float& wetR);
 
 	// ── Tilt filter state ─────────────────────────────────────────
 	float tiltDb_ = 0.0f;
@@ -314,11 +331,14 @@ private:
 	float lastTiltDb_   = 0.0f;
 	float tiltSmoothSc_ = 0.0f;
 
-	// ── Chaos state (3 S&H engines, same as ECHO-TR) ─────────────
+	// ── Chaos state (Hermite + Drift, per-channel D/G, quadrature F) ──
 	bool  chaosFilterEnabled_ = false;
 	bool  chaosDelayEnabled_  = false;
+	bool  chaosStereo_        = false;   // true when mode >= 1 (per-channel D/G)
 
+	// CHS D parameters
 	float chaosAmtD_                    = 0.0f;
+	float chaosAmtNormD_                = 0.0f;   // cached amtD * 0.01
 	float chaosShPeriodD_               = 8820.0f;
 	float smoothedChaosShPeriodD_       = 8820.0f;
 	float chaosDelayMaxSamples_         = 0.0f;
@@ -326,35 +346,54 @@ private:
 	float chaosGainMaxDb_               = 0.0f;
 	float smoothedChaosGainMaxDb_       = 0.0f;
 
-	float chaosDPhase_ = 0.0f, chaosDTarget_ = 0.0f, chaosDSmoothed_ = 0.0f;
-	float chaosDSmoothCoeff_ = 0.999f;
-	juce::Random chaosDRng_;
+	// CHS D Hermite+Drift: delay (per-channel for stereo styles)
+	float chaosDPrev_[2]         = {};
+	float chaosDCurr_[2]         = {};
+	float chaosDNext_[2]         = {};
+	float chaosDPhase_[2]        = {};
+	float chaosDDriftPhase_[2]   = {};
+	float chaosDDriftFreqHz_[2]  = {};
+	float chaosDOut_[2]          = {};
+	juce::Random chaosDRng_[2];
 
-	float chaosGPhase_ = 0.0f, chaosGTarget_ = 0.0f, chaosGSmoothed_ = 0.0f;
-	float chaosGSmoothCoeff_ = 0.999f;
-	juce::Random chaosGRng_;
+	// CHS D Hermite+Drift: gain (per-channel, decorrelated)
+	float chaosGPrev_[2]         = {};
+	float chaosGCurr_[2]         = {};
+	float chaosGNext_[2]         = {};
+	float chaosGPhase_[2]        = {};
+	float chaosGDriftPhase_[2]   = {};
+	float chaosGDriftFreqHz_[2]  = {};
+	float chaosGOut_[2]          = {};
+	juce::Random chaosGRng_[2];
 
+	// CHS F parameters
 	float chaosAmtF_                 = 0.0f;
 	float chaosShPeriodF_            = 8820.0f;
 	float smoothedChaosShPeriodF_    = 8820.0f;
 	float chaosFilterMaxOct_         = 0.0f;
 	float smoothedChaosFilterMaxOct_ = 0.0f;
 
-	float chaosFPhase_ = 0.0f, chaosFTarget_ = 0.0f, chaosFSmoothed_ = 0.0f;
-	float chaosFSmoothCoeff_ = 0.999f;
+	// CHS F Hermite+Drift: filter (mono S&H + quadrature drift)
+	float chaosFPrev_            = 0.0f;
+	float chaosFCurr_            = 0.0f;
+	float chaosFNext_            = 0.0f;
+	float chaosFPhase_           = 0.0f;
+	float chaosFDriftPhase_      = 0.0f;   // single phase; R = +90° offset
+	float chaosFDriftFreqHz_     = 0.0f;
+	float chaosFOut_[2]          = {};     // [0]=L, [1]=R (quadrature when stereo)
 	juce::Random chaosFRng_;
 
 	float chaosParamSmoothCoeff_ = 0.999f;
 
 	// Precomputed sampleRate-dependent smooth coefficients (set in prepareToPlay)
-	float cachedChaosDSmoothCoeff_       = 0.999f;
-	float cachedChaosGSmoothCoeff_       = 0.999f;
-	float cachedChaosFSmoothCoeff_       = 0.999f;
 	float cachedChaosParamSmoothCoeff_   = 0.999f;
 
 	static constexpr int kChaosDelayBufLen = 1024;
 	float chaosDelayBuf_[2][kChaosDelayBufLen] = {};
 	int   chaosDelayWritePos_ = 0;
+
+	static constexpr float kChaosDriftAmp = 0.3f;
+	static constexpr float kTwoPi = 6.283185307f;
 
 	// ── Pan state ─────────────────────────────────────────────────
 	float lastPan_      = 0.5f;
@@ -395,6 +434,10 @@ private:
 	std::atomic<float>* limModeParam     = nullptr;
 	std::atomic<float>* invPolParam      = nullptr;
 	std::atomic<float>* invStrParam      = nullptr;
+	std::atomic<float>* mixModeParam   = nullptr;
+	std::atomic<float>* dryLevelParam  = nullptr;
+	std::atomic<float>* wetLevelParam  = nullptr;
+	std::atomic<float>* filterPosParam = nullptr;
 	std::atomic<float>* syncParam     = nullptr;
 	std::atomic<float>* midiParam     = nullptr;
 	std::atomic<float>* autoParam     = nullptr;
@@ -425,45 +468,117 @@ private:
 	std::atomic<float>* uiCrtParam     = nullptr;
 	std::atomic<float>* uiColorParams[2] = { nullptr, nullptr };
 
-	// ── Inline chaos helpers (identical to ECHO-TR) ───────────────
+	// ── Inline chaos helpers (Hermite+Drift, consistent with FREQ-TR) ──
+	// Generic Hermite + Drift chaos engine (per-sample advance)
+	inline void advanceChaosEngine (
+		float& prev, float& curr, float& next, float& phase,
+		float& driftPhase, float& driftFreqHz, float& output,
+		juce::Random& rng, float period, float amtNorm, float sr) noexcept
+	{
+		phase += 1.0f;
+		if (phase >= period)
+		{
+			phase -= period;
+			prev = curr;
+			curr = next;
+			next = rng.nextFloat() * 2.0f - 1.0f;
+			const float driftBase = sr / juce::jmax (1.0f, period) * 0.37f;
+			driftFreqHz = driftBase * (0.88f + rng.nextFloat() * 0.24f);
+		}
+		const float t  = phase / period;
+		const float t2 = t * t;
+		const float t3 = t2 * t;
+		const float h00 =  2.0f * t3 - 3.0f * t2 + 1.0f;
+		const float h10 =         t3 - 2.0f * t2 + t;
+		const float h01 = -2.0f * t3 + 3.0f * t2;
+		const float h11 =         t3 -        t2;
+		const float tangCurr = (next - prev) * 0.5f;
+		const float tangNext = -curr * 0.5f;
+		const float shValue  = h00 * curr + h10 * tangCurr + h01 * next + h11 * tangNext;
+
+		driftPhase += driftFreqHz / sr;
+		if (driftPhase > 1e6f) driftPhase -= 1e6f;
+		const float driftValue = std::sin (driftPhase * kTwoPi) * kChaosDriftAmp;
+
+		const float shWeight = juce::jlimit (0.0f, 1.0f, amtNorm * 1.5f - 0.15f);
+		output = driftValue + shValue * shWeight;
+	}
+
 	inline void advanceChaosD() noexcept
 	{
 		smoothedChaosDelayMaxSamples_ += (chaosDelayMaxSamples_ - smoothedChaosDelayMaxSamples_) * (1.0f - chaosParamSmoothCoeff_);
 		smoothedChaosGainMaxDb_       += (chaosGainMaxDb_       - smoothedChaosGainMaxDb_)       * (1.0f - chaosParamSmoothCoeff_);
 		smoothedChaosShPeriodD_       += (chaosShPeriodD_       - smoothedChaosShPeriodD_)       * (1.0f - chaosParamSmoothCoeff_);
 
-		chaosDPhase_ += 1.0f;
-		if (chaosDPhase_ >= smoothedChaosShPeriodD_)
-		{
-			chaosDPhase_ -= smoothedChaosShPeriodD_;
-			chaosDTarget_ = chaosDRng_.nextFloat() * 2.0f - 1.0f;
-		}
-		chaosDSmoothed_ = chaosDSmoothCoeff_ * chaosDSmoothed_
-		                + (1.0f - chaosDSmoothCoeff_) * chaosDTarget_;
+		const float period = smoothedChaosShPeriodD_;
+		const float sr = (float) currentSampleRate;
+		const int nCh = chaosStereo_ ? 2 : 1;
 
-		chaosGPhase_ += 1.0f;
-		if (chaosGPhase_ >= smoothedChaosShPeriodD_)
+		for (int c = 0; c < nCh; ++c)
 		{
-			chaosGPhase_ -= smoothedChaosShPeriodD_;
-			chaosGTarget_ = chaosGRng_.nextFloat() * 2.0f - 1.0f;
+			advanceChaosEngine (chaosDPrev_[c], chaosDCurr_[c], chaosDNext_[c], chaosDPhase_[c],
+				chaosDDriftPhase_[c], chaosDDriftFreqHz_[c], chaosDOut_[c],
+				chaosDRng_[c], period, chaosAmtNormD_, sr);
+
+			advanceChaosEngine (chaosGPrev_[c], chaosGCurr_[c], chaosGNext_[c], chaosGPhase_[c],
+				chaosGDriftPhase_[c], chaosGDriftFreqHz_[c], chaosGOut_[c],
+				chaosGRng_[c], period, chaosAmtNormD_, sr);
 		}
-		chaosGSmoothed_ = chaosGSmoothCoeff_ * chaosGSmoothed_
-		                + (1.0f - chaosGSmoothCoeff_) * chaosGTarget_;
+
+		if (! chaosStereo_)
+		{
+			chaosDOut_[1] = chaosDOut_[0];
+			chaosGOut_[1] = chaosGOut_[0];
+		}
 	}
 
 	inline void advanceChaosF() noexcept
 	{
-		smoothedChaosFilterMaxOct_ += (chaosFilterMaxOct_ - smoothedChaosFilterMaxOct_) * (1.0f - chaosParamSmoothCoeff_);
-		smoothedChaosShPeriodF_    += (chaosShPeriodF_    - smoothedChaosShPeriodF_)    * (1.0f - chaosParamSmoothCoeff_);
+		smoothedChaosFilterMaxOct_  += (chaosFilterMaxOct_  - smoothedChaosFilterMaxOct_)  * (1.0f - chaosParamSmoothCoeff_);
+		smoothedChaosShPeriodF_     += (chaosShPeriodF_     - smoothedChaosShPeriodF_)     * (1.0f - chaosParamSmoothCoeff_);
+
+		const float amtNormF = chaosAmtF_ * 0.01f;
+		const float period   = smoothedChaosShPeriodF_;
+		const float sr       = (float) currentSampleRate;
 
 		chaosFPhase_ += 1.0f;
-		if (chaosFPhase_ >= smoothedChaosShPeriodF_)
+		if (chaosFPhase_ >= period)
 		{
-			chaosFPhase_ -= smoothedChaosShPeriodF_;
-			chaosFTarget_ = chaosFRng_.nextFloat() * 2.0f - 1.0f;
+			chaosFPhase_ -= period;
+			chaosFPrev_ = chaosFCurr_;
+			chaosFCurr_ = chaosFNext_;
+			chaosFNext_ = chaosFRng_.nextFloat() * 2.0f - 1.0f;
+			const float driftBase = sr / juce::jmax (1.0f, period) * 0.37f;
+			chaosFDriftFreqHz_ = driftBase * (0.88f + chaosFRng_.nextFloat() * 0.24f);
 		}
-		chaosFSmoothed_ = chaosFSmoothCoeff_ * chaosFSmoothed_
-		                + (1.0f - chaosFSmoothCoeff_) * chaosFTarget_;
+
+		const float t  = chaosFPhase_ / period;
+		const float t2 = t * t;
+		const float t3 = t2 * t;
+		const float h00 =  2.0f * t3 - 3.0f * t2 + 1.0f;
+		const float h10 =         t3 - 2.0f * t2 + t;
+		const float h01 = -2.0f * t3 + 3.0f * t2;
+		const float h11 =         t3 -        t2;
+		const float tangCurr = (chaosFNext_ - chaosFPrev_) * 0.5f;
+		const float tangNext = -chaosFCurr_ * 0.5f;
+		const float shValue  = h00 * chaosFCurr_ + h10 * tangCurr + h01 * chaosFNext_ + h11 * tangNext;
+
+		chaosFDriftPhase_ += chaosFDriftFreqHz_ / sr;
+		if (chaosFDriftPhase_ > 1e6f) chaosFDriftPhase_ -= 1e6f;
+		const float driftL = std::sin (chaosFDriftPhase_ * kTwoPi) * kChaosDriftAmp;
+
+		const float shWeight = juce::jlimit (0.0f, 1.0f, amtNormF * 1.5f - 0.15f);
+		chaosFOut_[0] = driftL + shValue * shWeight;
+
+		if (chaosStereo_)
+		{
+			const float driftR = std::sin (chaosFDriftPhase_ * kTwoPi + kTwoPi * 0.25f) * kChaosDriftAmp;
+			chaosFOut_[1] = driftR + shValue * shWeight;
+		}
+		else
+		{
+			chaosFOut_[1] = chaosFOut_[0];
+		}
 	}
 
 	inline void applyChaosDelay (float& wetL, float& wetR) noexcept
@@ -473,16 +588,16 @@ private:
 		chaosDelayBuf_[1][wp] = wetR;
 
 		const float centerDelay = smoothedChaosDelayMaxSamples_;
-		const float delaySamp   = juce::jlimit (0.0f, (float)(kChaosDelayBufLen - 2),
-		                                        centerDelay + chaosDSmoothed_ * smoothedChaosDelayMaxSamples_);
-
-		const float readPos = (float) wp - delaySamp;
-		const int iPos  = (int) std::floor (readPos);
-		const float frac = readPos - (float) iPos;
 		const int mask = kChaosDelayBufLen - 1;
 
 		for (int ch = 0; ch < 2; ++ch)
 		{
+			const float delaySamp = juce::jlimit (0.0f, (float)(kChaosDelayBufLen - 2),
+				centerDelay + chaosDOut_[ch] * smoothedChaosDelayMaxSamples_);
+			const float readPos = (float) wp - delaySamp;
+			const int iPos = (int) std::floor (readPos);
+			const float frac = readPos - (float) iPos;
+
 			const float p0 = chaosDelayBuf_[ch][(iPos - 1) & mask];
 			const float p1 = chaosDelayBuf_[ch][(iPos    ) & mask];
 			const float p2 = chaosDelayBuf_[ch][(iPos + 1) & mask];
@@ -497,10 +612,16 @@ private:
 
 		chaosDelayWritePos_ = (wp + 1) & mask;
 
-		const float gainDb  = chaosGSmoothed_ * smoothedChaosGainMaxDb_;
-		const float gainLin = std::exp2 (gainDb * 0.16609640474f); // fast dB→linear
-		wetL *= gainLin;
-		wetR *= gainLin;
+		// Per-channel gain modulation
+		for (int ch = 0; ch < 2; ++ch)
+		{
+			const float gainDb  = chaosGOut_[ch] * smoothedChaosGainMaxDb_;
+			const float ex = gainDb * 0.16609640474f;
+			const float exln2 = ex * 0.6931472f;
+			const float gainLin = 1.0f + exln2 * (1.0f + exln2 * 0.5f);
+			float& wet = (ch == 0) ? wetL : wetR;
+			wet *= gainLin;
+		}
 	}
 
 	// ── Limiter state ─────────────────────────────────────────────

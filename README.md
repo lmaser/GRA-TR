@@ -156,9 +156,9 @@ Micro-variation engine that adds organic randomness to the effect. Two independe
 Each chaos target has its own toggle and shares two global controls:
 
 - **AMOUNT (0–100%)**: Modulation depth. Default: 50%.
-- **SPEED (0.01–100 Hz)**: Sample-and-hold rate. Default: 5 Hz.
+- **SPEED (0.01–100 Hz)**: Random target rate — how often a new random value is generated. Default: 5 Hz.
 
-Uses exponential smoothing between random targets for glitch-free transitions.
+Uses Hermite cubic interpolation (Catmull-Rom) between random targets with a per-channel quadrature drift LFO for organic, stereo-decorrelated movement.
 
 ### LIM THRESHOLD (−36 to 0 dB)
 
@@ -191,7 +191,7 @@ Stereo-linked gain reduction ensures consistent imaging.
 - **Smoothing**: One-pole EMA per sample for gain, mix, and grain length.
 - **Wet filter**: Biquad HP/LP on the wet signal. Transposed Direct Form II. Coefficients updated once per block.
 - **Tilt EQ**: First-order symmetric shelf at 1 kHz. Coefficients cached with tolerance-based update.
-- **Chaos**: Sample-and-hold random modulation with exponential smoothing. Per-block coefficient precomputation.
+- **Chaos**: Hermite cubic interpolation between random targets with per-channel quadrature drift LFO. Per-block coefficient precomputation.
 - **Minimum grain**: 4 samples. Minimum taper: 2 samples.
 
 ### MIDI Implementation

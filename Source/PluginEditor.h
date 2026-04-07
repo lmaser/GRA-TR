@@ -35,6 +35,7 @@ private:
     void openChaosConfigPrompt (const char* amtParamId, const char* spdParamId, const juce::String& title);
     void openChaosFilterPrompt();
     void openChaosDelayPrompt();
+    void openMixSendPrompt();
     void openInfoPopup();
     void openGraphicsPopup();
     void setPromptOverlayActive (bool shouldBeActive);
@@ -151,6 +152,8 @@ private:
     juce::ComboBox limModeCombo;
     juce::ComboBox invPolCombo;
     juce::ComboBox invStrCombo;
+    juce::ComboBox mixModeCombo;
+    juce::ComboBox filterPosCombo;
 
     juce::ToggleButton syncButton;
     juce::ToggleButton midiButton;
@@ -189,6 +192,8 @@ private:
     std::unique_ptr<ComboBoxAttachment> limModeAttachment;
     std::unique_ptr<ComboBoxAttachment> invPolAttachment;
     std::unique_ptr<ComboBoxAttachment> invStrAttachment;
+    std::unique_ptr<ComboBoxAttachment> mixModeAttachment;
+    std::unique_ptr<ComboBoxAttachment> filterPosAttachment;
 
     std::unique_ptr<ButtonAttachment> syncAttachment;
     std::unique_ptr<ButtonAttachment> midiAttachment;
@@ -370,6 +375,49 @@ private:
     };
 
     FilterBarComponent filterBar_;
+
+    // ── Dual dry/wet level bar (SEND mix mode) ──
+    class DualMixBarComponent : public juce::Component,
+                                public juce::SettableTooltipClient
+    {
+    public:
+        DualMixBarComponent() = default;
+        void setOwner (GRATRAudioProcessorEditor* o) { owner = o; }
+        void setScheme (const GRAScheme& s) { scheme = s; repaint(); }
+
+        void paint (juce::Graphics& g) override;
+        void mouseDown (const juce::MouseEvent& e) override;
+        void mouseDrag (const juce::MouseEvent& e) override;
+        void mouseUp (const juce::MouseEvent& e) override;
+        void mouseMove (const juce::MouseEvent& e) override;
+
+        void updateFromProcessor();
+
+        float getDryLevel() const { return dryLevel_; }
+        float getWetLevel() const { return wetLevel_; }
+
+        enum DragTarget { None, DRY, WET };
+        DragTarget getLastTouched() const { return lastTouched_; }
+
+    private:
+        GRATRAudioProcessorEditor* owner = nullptr;
+        GRAScheme scheme {};
+
+        float dryLevel_ = 0.0f;
+        float wetLevel_ = 1.0f;
+
+        DragTarget currentDrag_ = None;
+        DragTarget lastTouched_ = WET;
+
+        static constexpr float kPad = 7.0f;
+        static constexpr int   kMarkerHitPx = 14;
+
+        juce::Rectangle<float> getInnerArea() const;
+        DragTarget hitTestMarker (juce::Point<float> p) const;
+        void  setLevelFromMouseX (float mouseX, DragTarget target);
+    };
+
+    DualMixBarComponent dualMixBar_;
 
     using PromptOverlay = TR::PromptOverlay;
 
