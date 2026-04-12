@@ -3,7 +3,7 @@
 
 namespace
 {
-	// ── Hermite 4-point cubic interpolation ──
+	// Hermite 4-point cubic interpolation --------------------------
 	inline float hermite4pt (float ym1, float y0, float y1, float y2, float frac) noexcept
 	{
 		const float c0 = y0;
@@ -50,7 +50,7 @@ namespace
 		return (dB <= -100.0f) ? 0.0f : std::exp2 (dB * 0.16609640474f);
 	}
 
-	// ── Precomputed Tukey taper for grain envelope ──
+	// Precomputed Tukey taper for grain envelope -------------------
 	constexpr int kTaperTableSize = 129;
 	struct TaperTable
 	{
@@ -82,7 +82,7 @@ namespace
 		return kTaperTable.data[idx] + frac * (kTaperTable.data[idx + 1] - kTaperTable.data[idx]);
 	}
 
-	// ── Wet-signal biquad filter helpers ──
+	// Wet-signal biquad filter helpers -----------------------------
 	using BQC = GRATRAudioProcessor::WetFilterBiquadCoeffs;
 
 	constexpr float kBW4_Q1 = 0.54119610f;
@@ -279,9 +279,14 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	smoothedPitchRatio_ = 1.0f;
 	smoothedFormantRatio_ = 1.0f;
 
-	smoothedInputGain  = 1.0f;
-	smoothedOutputGain = 1.0f;
-	smoothedMix        = 0.5f;
+	smoothedInputGain = fastDecibelsToGain (loadAtomicOrDefault (inputParam, kInputDefault));
+	smoothedOutputGain = fastDecibelsToGain (loadAtomicOrDefault (outputParam, kOutputDefault));
+	smoothedMix = juce::jlimit (0.0f, 1.0f, loadAtomicOrDefault (mixParam, kMixDefault));
+	smoothedDryLevel = juce::jlimit (0.0f, 1.0f, loadAtomicOrDefault (dryLevelParam, kDryLevelDefault));
+	smoothedWetLevel = juce::jlimit (0.0f, 1.0f, loadAtomicOrDefault (wetLevelParam, kWetLevelDefault));
+	smoothedPan = juce::jlimit (kPanMin, kPanMax, loadAtomicOrDefault (panParam, kPanDefault));
+	smoothedLimThreshold = fastDecibelsToGain (juce::jlimit (kLimThresholdMin, kLimThresholdMax,
+		loadAtomicOrDefault (limThresholdParam, kLimThresholdDefault)));
 
 	// Reset wet-signal filter state
 	wetFilterState_[0].reset();
@@ -326,10 +331,6 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 	// Precompute sampleRate-dependent smooth coefficients
 	cachedChaosParamSmoothCoeff_ = std::exp (-1.0f / ((float) currentSampleRate * 0.010f));
-
-	lastPan_ = 0.5f;
-	lastPanLeft_  = 0.70710678f;
-	lastPanRight_ = 0.70710678f;
 
 	// Limiter state reset
 	limEnv1_[0] = limEnv1_[1] = kLimFloor;
@@ -476,7 +477,7 @@ void GRATRAudioProcessor::filterWetSample (float& wetL, float& wetR)
 		}
 	}
 
-	// ── TILT filter — now handled by tiltWetSample() ──
+	// TILT filter - now handled by tiltWetSample() -----------------
 }
 
 void GRATRAudioProcessor::tiltWetSample (float& wetL, float& wetR)
@@ -584,7 +585,7 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 	if (!v.active || v.grainLenSamples < 2.0f)
 		return 0.0f;
 
-	// Guard: readPos past grain boundary → envelope is zero
+	// Guard: readPos past grain boundary -> envelope is zero
 	if (v.readPos >= v.grainLenSamples || v.readPos < 0.0f)
 		return 0.0f;
 
@@ -595,7 +596,7 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 	// Taper length: fraction of grain used for fade-in/out (from ENV GRA)
 	// Minimum must cover at least 2x the pitch ratio step so the fade-out
 	// zone can't be entirely skipped in a single read advance.
-	// Cap to 40% of grain so both tapers (in+out) never exceed 80% — the
+	// Cap to 40% of grain so both tapers (in+out) never exceed 80% - the
 	// envelope always reaches full amplitude even on very short grains.
 	const float minTaper = juce::jmax (2.0f, v.pitchRatio * 2.0f);
 	const float maxTaper = juce::jmax (2.0f, v.grainLenSamples * 0.4f);
@@ -618,7 +619,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const int numChannels = juce::jmin (buffer.getNumChannels(), 2);
 	const int numSamples  = buffer.getNumSamples();
 
-	// ── MIDI note tracking ──
+	// MIDI note tracking -------------------------------------------
 	const bool midiEnabled = loadBoolParamOrDefault (midiParam, false);
 
 	if (midiEnabled && ! midiMessages.isEmpty())
@@ -666,7 +667,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		return;
 	}
 
-	// ── Read parameters ──
+	// Read parameters ----------------------------------------------
 	const bool syncEnabled    = loadBoolParamOrDefault (syncParam, false);
 	const bool autoEnabled    = loadBoolParamOrDefault (autoParam, false);
 	const bool triggerParamOn = loadBoolParamOrDefault (triggerParam, false);
@@ -685,13 +686,14 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const float outputGainDb = loadAtomicOrDefault (outputParam, kOutputDefault);
 	const float mixValue     = loadAtomicOrDefault (mixParam, kMixDefault);
 	const int   mixMode  = loadIntParamOrDefault (mixModeParam, kMixModeDefault);
-	const float dryLevel = (mixMode == 1) ? loadAtomicOrDefault (dryLevelParam, kDryLevelDefault) : 0.0f;
-	const float wetLevel = (mixMode == 1) ? loadAtomicOrDefault (wetLevelParam, kWetLevelDefault) : 0.0f;
+	const float dryLevelTarget = (mixMode == 1) ? loadAtomicOrDefault (dryLevelParam, kDryLevelDefault) : kDryLevelDefault;
+	const float wetLevelTarget = (mixMode == 1) ? loadAtomicOrDefault (wetLevelParam, kWetLevelDefault) : kWetLevelDefault;
+	const float panTarget = juce::jlimit (kPanMin, kPanMax, loadAtomicOrDefault (panParam, kPanDefault));
 
 	// Filter / Tilt position
 	{
 		const int fltPos = loadIntParamOrDefault (filterPosParam, kFilterPosDefault);
-		// 0=F▼T▼  1=F▲T▲  2=F▲T▼  3=F▼T▲
+		// 0=F-post T-post  1=F-pre T-pre  2=F-pre T-post  3=F-post T-pre
 		filterPre_ = (fltPos == 1 || fltPos == 2);
 		tiltPre_   = (fltPos == 1 || fltPos == 3);
 	}
@@ -705,18 +707,18 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const float inputGain  = fastDecibelsToGain (inputGainDb);
 	const float outputGain = fastDecibelsToGain (outputGainDb);
 
-	// ── Limiter ──
+	// Limiter ------------------------------------------------------
 	const int limMode = loadIntParamOrDefault (limModeParam, kLimModeDefault);
-	const float limThreshLin = (limMode != 0)
+	const float limThreshLinTarget = (limMode != 0)
 		? fastDecibelsToGain (loadAtomicOrDefault (limThresholdParam, kLimThresholdDefault))
 		: 1.0f;
 
-	// Pitch ratio & formant ratio (targets — smoothed per-sample below)
+	// Pitch ratio & formant ratio (targets - smoothed per-sample below)
 	currentPitchRatio_   = std::exp2 (pitchSemi / 12.0f);
 	currentFormantRatio_ = std::exp2 (formantSemi / 12.0f);
 
-	// MOD frequency multiplier (hyperbolic below centre, linear above — same as ECHO-TR)
-	// 0.0 → x0.25, 0.5 → x1.0, 1.0 → x4.0
+	// MOD frequency multiplier (hyperbolic below centre, linear above - same as ECHO-TR)
+	// 0.0 -> x0.25, 0.5 -> x1.0, 1.0 -> x4.0
 	float modFreqMultiplier;
 	if (modValue < 0.5f)
 		modFreqMultiplier = 1.0f / (4.0f - 6.0f * modValue);
@@ -751,7 +753,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	float grainLenSamples = (float) currentSampleRate * (targetGrainMs / 1000.0f);
 	grainLenSamples = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2), grainLenSamples);
 
-	// Apply MOD multiplier: higher multiplier → shorter grain → higher frequency
+	// Apply MOD multiplier: higher multiplier -> shorter grain -> higher frequency
 	const float effectiveGrainLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
 	                                              grainLenSamples / modFreqMultiplier);
 
@@ -761,8 +763,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		const float vel  = (float) lastMidiVelocity.load (std::memory_order_relaxed);
 		const float tLin = juce::jlimit (0.0f, 1.0f, (vel - 1.0f) / 126.0f);
 
-		constexpr float kTauMax = 0.200f;   // 200 ms — full portamento at pianissimo
-		constexpr float kTauMin = 0.0002f;  // 0.2 ms — imperceptible at max velocity
+		constexpr float kTauMax = 0.200f;   // 200 ms - full portamento at pianissimo
+		constexpr float kTauMin = 0.0002f;  // 0.2 ms - imperceptible at max velocity
 
 		const float t   = std::pow (tLin, 0.12f);  // gentler curve for grain-quantised glide
 		const float tau = kTauMax - t * (kTauMax - kTauMin);
@@ -795,7 +797,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		envGraAmountScaled_ = 0.0f;
 	}
 
-	// ── Load filter / tilt / chaos per-block ──
+	// Load filter / tilt / chaos per-block -------------------------
 	wetFilterHpOn_ = loadBoolParamOrDefault (filterHpOnParam, false);
 	wetFilterLpOn_ = loadBoolParamOrDefault (filterLpOnParam, false);
 	wetFilterTargetHpFreq_ = loadAtomicOrDefault (filterHpFreqParam, kFilterHpFreqDefault);
@@ -809,7 +811,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	tiltDb_ = loadAtomicOrDefault (tiltParam, kTiltDefault);
 
-	// ── Chaos ──
+	// Chaos --------------------------------------------------------
 	chaosFilterEnabled_ = loadBoolParamOrDefault (chaosParam, false);
 	chaosDelayEnabled_  = loadBoolParamOrDefault (chaosDelayParam, false);
 	const bool anyChaos = chaosFilterEnabled_ || chaosDelayEnabled_;
@@ -866,6 +868,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	if (std::abs (smoothedInputGain  - inputGain)  < kSnapEpsilon) smoothedInputGain  = inputGain;
 	if (std::abs (smoothedOutputGain - outputGain) < kSnapEpsilon) smoothedOutputGain = outputGain;
 	if (std::abs (smoothedMix        - mixValue)   < kSnapEpsilon) smoothedMix        = mixValue;
+	if (std::abs (smoothedDryLevel   - dryLevelTarget) < kSnapEpsilon) smoothedDryLevel = dryLevelTarget;
+	if (std::abs (smoothedWetLevel   - wetLevelTarget) < kSnapEpsilon) smoothedWetLevel = wetLevelTarget;
+	if (std::abs (smoothedPan        - panTarget) < kSnapEpsilon) smoothedPan = panTarget;
+	if (std::abs (smoothedLimThreshold - limThreshLinTarget) < kSnapEpsilon) smoothedLimThreshold = limThreshLinTarget;
 	if (std::abs (smoothedPitchRatio_   - currentPitchRatio_)   < kSnapEpsilon) smoothedPitchRatio_   = currentPitchRatio_;
 	if (std::abs (smoothedFormantRatio_ - currentFormantRatio_) < kSnapEpsilon) smoothedFormantRatio_ = currentFormantRatio_;
 
@@ -873,15 +879,15 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	// so the dry signal passes through instead of silence.
 	const float effectiveMixTarget = (!autoEnabled && !triggerEnabled) ? 0.0f : mixValue;
 
-	// ── Detect TRIGGER edge ──
+	// Detect TRIGGER edge ------------------------------------------
 	const bool triggerEdge = triggerEnabled && !prevTriggerState_;
 	prevTriggerState_ = triggerEnabled;
 
-	// ── Detect AUTO enable edge (launch immediately on enable) ──
+	// Detect AUTO enable edge (launch immediately on enable) ------
 	const bool autoJustEnabled = autoEnabled && !lastAutoEnabled_;
 	lastAutoEnabled_ = autoEnabled;
 
-	// ── Per-sample processing ──
+	// Per-sample processing ----------------------------------------
 	const int wrapMask = grainBufferLength - 1;
 	auto* bufL = grainBuffer.getWritePointer (0);
 	auto* bufR = grainBuffer.getWritePointer (1);
@@ -898,6 +904,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		smoothedInputGain  += (inputGain  - smoothedInputGain)  * kGainSmoothStep;
 		smoothedOutputGain += (outputGain - smoothedOutputGain) * kGainSmoothStep;
 		smoothedMix        += (effectiveMixTarget - smoothedMix) * kGainSmoothStep;
+		smoothedDryLevel   += (dryLevelTarget - smoothedDryLevel) * kGainSmoothStep;
+		smoothedWetLevel   += (wetLevelTarget - smoothedWetLevel) * kGainSmoothStep;
+		smoothedPan        += (panTarget - smoothedPan) * kGainSmoothStep;
+		smoothedLimThreshold += (limThreshLinTarget - smoothedLimThreshold) * kGainSmoothStep;
 
 		// Smooth pitch & formant ratios (same EMA as gain to avoid abrupt changes)
 		smoothedPitchRatio_   += (currentPitchRatio_   - smoothedPitchRatio_)   * kGainSmoothStep;
@@ -934,7 +944,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			grainBufferWritePos = (grainBufferWritePos + 1) & wrapMask;
 		}
 
-		// ── Grain triggering ──
+		// Grain triggering -------------------------------------------
 		bool shouldLaunch = false;
 
 		if (autoEnabled)
@@ -971,7 +981,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				// Offset R anchor by half grain for channel decorrelation
 				voiceA_[1].anchorWritePos = (voiceA_[1].anchorWritePos - (int)(captureLen * 0.5f)) & wrapMask;
 			}
-			else if (mode == 3) // DUAL: R at ×0.5 pitch (octave down) + temporal offset
+			else if (mode == 3) // DUAL: R at x0.5 pitch (octave down) + temporal offset
 			{
 				launchNewGrain (0, captureLen, reverseEnabled);
 				launchNewGrain (1, captureLen, reverseEnabled);
@@ -985,7 +995,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			}
 		}
 
-		// ── Read grains and compute wet signal ──
+		// Read grains and compute wet signal --------------------------
 		float wetL = 0.0f, wetR = 0.0f;
 
 		for (int ch = 0; ch < 2; ++ch)
@@ -1017,7 +1027,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 						{
 							voiceA_[1].anchorWritePos = (voiceA_[1].anchorWritePos - (int)(captureLen * 0.5f)) & wrapMask;
 						}
-						// DUAL: R channel plays at ×0.5 pitch (octave down) + offset anchor
+						// DUAL: R channel plays at x0.5 pitch (octave down) + offset anchor
 						if (mode == 3 && ch == 1)
 						{
 							voiceA_[1].pitchRatio = smoothedPitchRatio_ * 0.5f;
@@ -1091,7 +1101,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		float wL = wetL * smoothedOutputGain;
 		float wR = wetR * smoothedOutputGain;
 		if (limMode == 1)
-			applyLimiterSample (wL, wR, limThreshLin);
+			applyLimiterSample (wL, wR, smoothedLimThreshold);
 
 		// Invert Polarity / Stereo (WET mode: after Limiter WET)
 		if (invPol == 1) { wL = -wL; wR = -wR; }
@@ -1099,73 +1109,54 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 		float dG, wG;
 		if (mixMode == 0) { dG = 1.0f - smoothedMix; wG = smoothedMix; }
-		else              { dG = dryLevel; wG = wetLevel; }
+		else              { dG = smoothedDryLevel; wG = smoothedWetLevel; }
 		wL *= wG;
 		wR *= wG;
 		const float dL = dryL * dG;
 		const float dR = dryR * dG;
+		float outL = 0.0f, outR = 0.0f;
 
 		if (sumBusVal == 0) // ST: normal stereo
 		{
-			if (channelL != nullptr) channelL[i] = dL + wL;
-			if (channelR != nullptr) channelR[i] = dR + wR;
+			outL = dL + wL;
+			outR = dR + wR;
 		}
-		else if (sumBusVal == 1) // →M: wet collapsed to mono mid
+		else if (sumBusVal == 1) // to M: wet collapsed to mono mid
 		{
 			const float midBus = (wL + wR) * 0.5f;
-			if (channelL != nullptr) channelL[i] = dL + midBus;
-			if (channelR != nullptr) channelR[i] = dR + midBus;
+			outL = dL + midBus;
+			outR = dR + midBus;
 		}
-		else // →S: wet collapsed to side
+		else // to S: wet collapsed to side
 		{
 			const float sideBus = (wL - wR) * 0.5f;
-			if (channelL != nullptr) channelL[i] = dL + sideBus;
-			if (channelR != nullptr) channelR[i] = dR - sideBus;
+			outL = dL + sideBus;
+			outR = dR - sideBus;
 		}
-	}
 
-	// ── Pan (equal-power, stereo only) ──
-	if (numChannels >= 2)
-	{
-		const float pan = panParam->load();
-		if (std::abs (pan - lastPan_) > 0.001f)
+		if (numChannels >= 2
+		 && (std::abs (panTarget - 0.5f) > 0.001f || std::abs (smoothedPan - 0.5f) > 0.001f))
 		{
-			lastPan_ = pan;
-			const float angle = pan * 1.5707963f;
-			lastPanLeft_  = std::cos (angle);
-			lastPanRight_ = std::sin (angle);
+			const float angle = smoothedPan * 1.5707963f;
+			outL *= std::cos (angle);
+			outR *= std::sin (angle);
 		}
-		if (std::abs (lastPan_ - 0.5f) > 0.001f)
-		{
-			juce::FloatVectorOperations::multiply (buffer.getWritePointer (0), lastPanLeft_,  numSamples);
-			juce::FloatVectorOperations::multiply (buffer.getWritePointer (1), lastPanRight_, numSamples);
-		}
-	}
 
-	// ── Transparent Peak Limiter (GLOBAL: after pan, before safety) ──
-	if (limMode == 2)
-	{
-		float* left  = buffer.getWritePointer (0);
-		float* right = numChannels >= 2 ? buffer.getWritePointer (1) : nullptr;
-		if (right != nullptr)
-			applyLimiter (left, right, numSamples, limThreshLin);
-		else
+		if (limMode == 2)
 		{
-			float dummy[2048];
-			int remaining = numSamples;
-			int offset = 0;
-			while (remaining > 0)
+			if (numChannels >= 2)
+				applyLimiterSample (outL, outR, smoothedLimThreshold);
+			else
 			{
-				const int chunk = juce::jmin (remaining, 2048);
-				std::memset (dummy, 0, sizeof (float) * (size_t) chunk);
-				applyLimiter (left + offset, dummy, chunk, limThreshLin);
-				remaining -= chunk;
-				offset += chunk;
+				float dummy = 0.0f;
+				applyLimiterSample (outL, dummy, smoothedLimThreshold);
 			}
 		}
+
+		if (channelL != nullptr) channelL[i] = outL;
+		if (channelR != nullptr) channelR[i] = outR;
 	}
 
-	// ── Invert Polarity / Stereo (GLOBAL mode: after Limiter GLOBAL, before safety) ──
 	if (invPol == 2)
 		for (int ch = 0; ch < numChannels; ++ch)
 			juce::FloatVectorOperations::multiply (buffer.getWritePointer (ch), -1.0f, numSamples);
@@ -1352,7 +1343,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamSync, "Sync", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamMidi, "MIDI", false));
-	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamAuto, "Auto", true));
+	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamAuto, "Auto", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamTrigger, "Trigger", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamReverse, "Reverse", false));
 

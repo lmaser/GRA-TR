@@ -12,7 +12,7 @@ public:
 	GRATRAudioProcessor();
 	~GRATRAudioProcessor() override;
 
-	// ── Parameter IDs ──────────────────────────────────────────────
+	// Parameter IDs ------------------------------------------------
 	static constexpr const char* kParamTimeMs     = "time_ms";
 	static constexpr const char* kParamTimeSync   = "time_sync";
 	static constexpr const char* kParamMod        = "mod";
@@ -84,7 +84,7 @@ public:
 	static constexpr const char* kParamUiColor0   = "ui_color0";
 	static constexpr const char* kParamUiColor1   = "ui_color1";
 
-	// ── Parameter ranges and defaults ──────────────────────────────
+	// Parameter ranges and defaults --------------------------------
 	static constexpr float kTimeMsMin     = 0.01f;
 	static constexpr float kTimeMsMax     = 5000.0f;
 	static constexpr float kTimeMsMaxSync = 20000.0f;
@@ -124,7 +124,7 @@ public:
 
 	// Mode In / Mode Out / Sum Bus
 	static constexpr int   kModeInOutDefault = 0;   // 0=L+R  1=MID  2=SIDE
-	static constexpr int   kSumBusDefault    = 0;   // 0=ST   1=→M   2=→S
+	static constexpr int   kSumBusDefault    = 0;   // 0=ST   1=to M   2=to S
 	static constexpr int   kInvPolDefault    = 0;   // 0=NONE  1=WET  2=GLOBAL
 	static constexpr int   kInvStrDefault    = 0;   // 0=NONE  1=WET  2=GLOBAL
 	static constexpr float kSqrt2Over2       = 0.707106781f;
@@ -163,7 +163,7 @@ public:
 	static constexpr float kChaosSpdMax     = 100.0f;
 	static constexpr float kChaosSpdDefault = 5.0f;
 
-	// ── Helpers ────────────────────────────────────────────────────
+	// Helpers -------------------------------------------------------
 	static juce::StringArray getTimeSyncChoices();
 	static juce::String getTimeSyncName (int index);
 	float tempoSyncToMs (int syncIndex, double bpm) const;
@@ -172,7 +172,7 @@ public:
 	float getCurrentGrainMs() const;
 	juce::String getCurrentTimeDisplay() const;
 
-	// ── AudioProcessor overrides ──────────────────────────────────
+	// AudioProcessor overrides -------------------------------------
 	void prepareToPlay (double sampleRate, int samplesPerBlock) override;
 	void releaseResources() override;
 
@@ -203,7 +203,7 @@ public:
 	void getCurrentProgramStateInformation (juce::MemoryBlock& destData) override;
 	void setCurrentProgramStateInformation (const void* data, int sizeInBytes) override;
 
-	// ── UI state management ───────────────────────────────────────
+	// UI state management ------------------------------------------
 	void setUiEditorSize (int width, int height);
 	int  getUiEditorWidth() const noexcept;
 	int  getUiEditorHeight() const noexcept;
@@ -248,19 +248,19 @@ private:
 
 	double currentSampleRate = 44100.0;
 
-	// ── Grain circular buffer (continuously written) ──────────────
+	// Grain circular buffer (continuously written) -----------------
 	juce::AudioBuffer<float> grainBuffer;
 	int  grainBufferLength   = 0;
 	int  grainBufferWritePos = 0;
 
-	// ── Grain voice state (per-channel pair) ──────────────────────
+	// Grain voice state (per-channel pair) -------------------------
 	// Two voice layers allow crossfade between old and new grain.
 	struct GrainVoice
 	{
 		int   anchorWritePos   = 0;       // write-pos snapshot when grain was captured
 		float grainLenSamples  = 0.0f;    // locked grain length in samples
 		float readPos          = 0.0f;    // fractional read position within grain
-		float fadeGain         = 0.0f;    // crossfade envelope (0→1 fade-in, 1→0 fade-out)
+		float fadeGain         = 0.0f;    // crossfade envelope (0->1 fade-in, 1->0 fade-out)
 		float pitchRatio       = 1.0f;    // locked pitch ratio at launch time
 		bool  active           = false;
 		bool  reverse          = false;   // play this grain backwards
@@ -277,24 +277,28 @@ private:
 	bool  prevTriggerState_   = false;    // edge-detect for TRIGGER toggle
 	bool  lastAutoEnabled_    = false;
 
-	// ── Pitch state ───────────────────────────────────────────────
+	// Pitch state --------------------------------------------------
 	float currentPitchRatio_  = 1.0f;     // 2^(semitones/12) playback rate
 	float smoothedPitchRatio_ = 1.0f;     // EMA-smoothed pitch ratio
 
-	// ── Formant shift (grain-size-based spectral envelope control) ──
+	// Formant shift (grain-size-based spectral envelope control) ---
 	// Formant in semitones: controls grain capture length.
 	// Shorter capture (+st) = brighter, longer capture (-st) = warmer.
 	// Read rate stays at pitchRatio, so pitch is independent.
 	float currentFormantRatio_ = 1.0f;  // 2^(formantSemitones/12)
 	float smoothedFormantRatio_ = 1.0f; // EMA-smoothed formant ratio
 
-	// ── Per-sample EMA-smoothed parameters ────────────────────────
-	float smoothedInputGain  = 1.0f;
-	float smoothedOutputGain = 1.0f;
-	float smoothedMix        = 0.5f;
+	// Per-sample EMA-smoothed parameters ---------------------------
+	float smoothedInputGain   = 1.0f;
+	float smoothedOutputGain  = 1.0f;
+	float smoothedMix         = 0.5f;
+	float smoothedDryLevel    = kDryLevelDefault;
+	float smoothedWetLevel    = kWetLevelDefault;
+	float smoothedPan         = kPanDefault;
+	float smoothedLimThreshold = 1.0f;
 	bool  filterPre_  = false;
 	bool  tiltPre_    = false;
-	// ── Wet-signal HP/LP filter state ─────────────────────────────
+	// Wet-signal HP/LP filter state --------------------------------
 	struct WetFilterChannelState
 	{
 		WetFilterBiquadState hp[2];
@@ -323,7 +327,7 @@ private:
 	void  filterWetSample (float& wetL, float& wetR);
 	void  tiltWetSample   (float& wetL, float& wetR);
 
-	// ── Tilt filter state ─────────────────────────────────────────
+	// Tilt filter state -------------------------------------------
 	float tiltDb_ = 0.0f;
 	float tiltB0_ = 1.0f, tiltB1_ = 0.0f, tiltA1_ = 0.0f;
 	float tiltTargetB0_ = 1.0f, tiltTargetB1_ = 0.0f, tiltTargetA1_ = 0.0f;
@@ -331,7 +335,7 @@ private:
 	float lastTiltDb_   = 0.0f;
 	float tiltSmoothSc_ = 0.0f;
 
-	// ── Chaos state (Hermite + Drift, per-channel D/G, quadrature F) ──
+	// Chaos state (Hermite + Drift, per-channel D/G, quadrature F) -
 	bool  chaosFilterEnabled_ = false;
 	bool  chaosDelayEnabled_  = false;
 	bool  chaosStereo_        = false;   // true when mode >= 1 (per-channel D/G)
@@ -378,7 +382,7 @@ private:
 	float chaosFCurr_            = 0.0f;
 	float chaosFNext_            = 0.0f;
 	float chaosFPhase_           = 0.0f;
-	float chaosFDriftPhase_      = 0.0f;   // single phase; R = +90° offset
+	float chaosFDriftPhase_      = 0.0f;   // single phase; R = +90 deg offset
 	float chaosFDriftFreqHz_     = 0.0f;
 	float chaosFOut_[2]          = {};     // [0]=L, [1]=R (quadrature when stereo)
 	juce::Random chaosFRng_;
@@ -395,29 +399,26 @@ private:
 	static constexpr float kChaosDriftAmp = 0.3f;
 	static constexpr float kTwoPi = 6.283185307f;
 
-	// ── Pan state ─────────────────────────────────────────────────
-	float lastPan_      = 0.5f;
-	float lastPanLeft_  = 0.70710678f;
-	float lastPanRight_ = 0.70710678f;
+	// Pan state ----------------------------------------------------
 
-	// ── Env Gra crossfade parameters (live) ───────────────────────
+	// Env Gra crossfade parameters (live) --------------------------
 	float envGraCrossfadeFraction_ = 0.5f;   // fraction of grain used for fade
 	float envGraAmountScaled_      = 0.5f;   // 0-1 depth
 
-	// ── MIDI state ────────────────────────────────────────────────
+	// MIDI state ---------------------------------------------------
 	std::atomic<int>   lastMidiNote       { -1 };
 	std::atomic<int>   lastMidiVelocity   { 0 };
 	std::atomic<float> currentMidiFrequency { 0.0f };
 	std::atomic<int>   midiChannel        { 0 };
 
-	// ── UI state atomics ──────────────────────────────────────────
+	// UI state atomics ---------------------------------------------
 	std::atomic<int> uiEditorWidth  { 360 };
 	std::atomic<int> uiEditorHeight { 540 };
 	std::atomic<int> uiUseCustomPalette { 0 };
 	std::atomic<int> uiCrtEnabled  { 0 };
 	std::atomic<juce::uint32> uiCustomPalette[2] {};
 
-	// ── Raw parameter pointers (cached) ───────────────────────────
+	// Raw parameter pointers (cached) ------------------------------
 	std::atomic<float>* timeMsParam   = nullptr;
 	std::atomic<float>* timeSyncParam = nullptr;
 	std::atomic<float>* modParam      = nullptr;
@@ -468,7 +469,7 @@ private:
 	std::atomic<float>* uiCrtParam     = nullptr;
 	std::atomic<float>* uiColorParams[2] = { nullptr, nullptr };
 
-	// ── Inline chaos helpers (Hermite+Drift, consistent with FREQ-TR) ──
+	// Inline chaos helpers (Hermite+Drift, consistent with FREQ-TR) -
 	// Generic Hermite + Drift chaos engine (per-sample advance)
 	inline void advanceChaosEngine (
 		float& prev, float& curr, float& next, float& phase,
@@ -624,7 +625,7 @@ private:
 		}
 	}
 
-	// ── Limiter state ─────────────────────────────────────────────
+	// Limiter state -----------------------------------------------
 	static constexpr float kLimFloor = 1.0e-12f;
 	float limEnv1_[2] = { kLimFloor, kLimFloor };
 	float limEnv2_[2] = { kLimFloor, kLimFloor };
@@ -640,7 +641,7 @@ private:
 			const float peakL = std::abs (leftData[i]);
 			const float peakR = std::abs (rightData[i]);
 
-			// Stage 1 — leveler (2 ms attack, 10 ms release)
+	// Stage 1 - leveler (2 ms attack, 10 ms release)
 			for (int ch = 0; ch < 2; ++ch)
 			{
 				const float p = (ch == 0) ? peakL : peakR;
@@ -651,7 +652,7 @@ private:
 				if (limEnv1_[ch] < kLimFloor) limEnv1_[ch] = kLimFloor;
 			}
 
-			// Stage 2 — brickwall (instant attack, 100 ms release)
+	// Stage 2 - brickwall (instant attack, 100 ms release)
 			for (int ch = 0; ch < 2; ++ch)
 			{
 				const float p = (ch == 0) ? peakL : peakR;
@@ -713,7 +714,7 @@ private:
 		sampleR *= gr;
 	}
 
-	// ── Grain helpers ─────────────────────────────────────────────
+	// Grain helpers -----------------------------------------------
 	void launchNewGrain (int ch, float grainLenSamples, bool reverseGrain);
 	float readGrainInterpolated (const GrainVoice& v, int ch) const;
 	float grainEnvelope (const GrainVoice& v) const;
