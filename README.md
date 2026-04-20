@@ -3,7 +3,7 @@
 <br/><br/>
 
 GRA-TR is a granular audio effect built for texture generation, spectral manipulation, and time-frozen soundscapes.
-It captures audio into a circular buffer and replays it as overlapping grains with independent pitch, formant, and time control, driven by MIDI notes, auto-trigger, or manual trigger.
+It captures audio into a circular buffer and replays it as overlapping grains with independent pitch, formant, smoothness, and time control, driven by MIDI notes, auto-trigger, or manual trigger.
 
 ## Concept
 
@@ -11,15 +11,15 @@ GRA-TR treats granular synthesis as a real-time performance tool. By splitting i
 
 The trigger system offers three modes: AUTO continuously relaunches grains at the rate set by TIME, TRIGGER freezes the buffer and loops whatever was captured (creating infinite sustain from any source), and MIDI overrides grain length to match incoming note pitch - turning the granular engine into a resonator that plays melodies.
 
-Formant control scales the capture window independently from read rate, shifting the spectral center without changing pitch. Combined with reverse mode and per-channel stereo processing, GRA-TR can produce everything from subtle chorusing to alien granular pads.
+Formant control scales the capture window independently from read rate, shifting the spectral center without changing pitch. SMOOTH controls the taper and crossfade depth of each grain in both forward and reverse playback. Combined with reverse mode and per-channel stereo processing, GRA-TR can produce everything from subtle chorusing to alien granular pads.
 
 ## Interface
 
 GRA-TR uses a text-based UI with horizontal bar sliders. Core controls stay on the main panel, and the IO section toggles between the main view and the extended IO/routing view without opening separate pages or hidden menus.
 
 - **Bar sliders**: Click and drag horizontally. Right-click for numeric entry (except STYLE, which is slider-only).
-- **Toggle buttons**: SYNC, MIDI, AUTO, TRG (trigger), RVS (reverse), ENV GRA. Click to enable/disable.
-- **Sub-labels**: Click the text next to MIDI or ENV GRA to open their configuration prompt.
+- **Toggle buttons**: SYNC, MIDI, AUTO, TRG (trigger), RVS (reverse). Click to enable/disable.
+- **Sub-labels**: Click the text next to MIDI to open the MIDI channel prompt.
 - **Collapsible INPUT/OUTPUT/MIX section**: Click the toggle bar (triangle) at the top of the slider area to swap between main parameters and the extended IO/routing controls: INPUT, OUTPUT, TILT, FILTER, PAN, MIX, LIMIT, MODE IN/OUT, SUM BUS, INV POL, INV STR, MIX MODE, and FILTER POS. The toggle bar stays fixed in place; only the arrow direction changes. State persists across sessions and preset changes.
 - **Filter bar**: Visible in the INPUT/OUTPUT/MIX section. Click to open the HP/LP filter configuration prompt with frequency, slope, and enable/disable controls for each filter.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and a link to Graphics settings.
@@ -29,8 +29,9 @@ GRA-TR uses a text-based UI with horizontal bar sliders. Core controls stay on t
 The value column to the right of each slider shows the current state in context:
 - TIME shows milliseconds, MIDI note name when MIDI is active, or sync division when SYNC is active.
 - MOD shows the frequency multiplier.
-- PITCH shows semitones with +/- sign.
-- FORMANT shows semitones with +/- sign.
+- PITCH shows semitones with +/- sign and two decimal places.
+- FORMANT shows semitones with +/- sign and two decimal places.
+- SMOOTH shows percentage.
 - STYLE shows MONO/STEREO/WIDE/DUAL.
 - INPUT/OUTPUT show dB values.
 - TILT shows dB values.
@@ -53,18 +54,25 @@ Frequency multiplier applied to the grain length.
 0% = x0.25 (4x longer grains), 50% = x1.0 (no change), 100% = x4.0 (4x shorter grains).
 Useful for octave shifting, harmonic tuning, and detuned textures.
 
-### PITCH (-24 to +24 semitones)
+### PITCH (-24.00 to +24.00 semitones)
 
 Grain read-rate control. Changes how fast each grain is read back, directly affecting perceived pitch.
 +12 st = reads at 2x speed (octave up). -12 st = reads at 0.5x speed (octave down).
 The capture window size stays the same - only the playback speed changes.
 
-### FORMANT (-12 to +12 semitones)
+### FORMANT (-12.00 to +12.00 semitones)
 
 Spectral character control. Scales the capture window size independently from read rate.
 +12 st = captures half the window (brighter, thinner timbre at the same pitch).
 -12 st = captures double the window (warmer, fuller timbre at the same pitch).
 Formant and pitch are independent: pitch changes speed, formant changes spectral content.
+
+### SMOOTH (0-100%)
+
+Controls the taper and crossfade depth of each grain.
+Lower values keep entries and exits tighter and more immediate. Higher values lengthen the taper, soften transitions, and increase overlap between grains.
+
+SMOOTH applies to both forward and reverse playback. It does not change pitch or formant ratio directly - it changes how softly each grain fades in and out.
 
 ### STYLE
 
@@ -179,13 +187,6 @@ Manual trigger mode. When enabled, the grain buffer is frozen - no new audio is 
 
 Reverse grain playback. When enabled, each grain is read backward, producing reversed texture output. The buffer capture direction remains forward - only the grain readout is reversed.
 
-### ENV GRA (Envelope Grain)
-
-Envelope-driven grain retriggering. When enabled, input amplitude changes trigger new grains.
-
-**TAU (0-100%)**: Recovery speed - how quickly the envelope resets after a trigger.
-**AMT (0-100%)**: Sensitivity - how much amplitude change is needed to trigger a new grain.
-
 ### CHAOS
 
 Micro-variation engine that adds organic randomness to the effect. Two independent chaos targets:
@@ -235,11 +236,11 @@ Modes:
 - **Buffer**: Power-of-2 circular buffer with bitwise AND wrapping. Frozen (stops writing) during TRG mode.
 - **Interpolation**: 4-point Hermite cubic on all grain reads.
 - **Grain voices**: Dual voice per channel (A = primary fade-in, B = crossfade-out) for click-free transitions.
-- **Envelope**: Precomputed 129-point Tukey (raised-cosine) lookup table with linear interpolation. No per-sample trigonometry.
+- **Envelope**: Precomputed 129-point Tukey (raised-cosine) lookup table with linear interpolation. No per-sample trigonometry. SMOOTH controls how much of each grain is used as taper.
 - **Pitch**: Read rate = `2^(semitones/12)`. Grains advance by pitch ratio each sample.
 - **Formant**: Capture length = `effectiveGrainLen / 2^(formantSemitones/12)`. Scales capture window independently from pitch.
 - **Reverse**: Read position always advances forward; reverse mapping (`grainLen - readPos`) is applied in the read function.
-- **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide.
+- **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, pitch ratio, formant ratio, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide.
 - **Wet filter**: Biquad HP/LP on the wet signal. Transposed Direct Form II. Coefficients updated once per block.
 - **Tilt EQ**: First-order symmetric shelf at 1 kHz. Coefficients cached with tolerance-based update.
 - **Chaos**: Hermite cubic interpolation between random targets with per-channel quadrature drift LFO. Per-block coefficient precomputation.
@@ -256,3 +257,5 @@ Modes:
 ### v1.4
 - Added dual-stage transparent peak limiter with LIM THRESHOLD (-36 to 0 dB) and LIM MODE (NONE/WET/GLOBAL). Stereo-linked gain reduction with 2 ms/10 ms leveler + instant/100 ms brickwall stages.
 - Added SEND dry/wet controls and smoothing for SEND dry/wet, pan, and limiter threshold to keep fast GUI moves artifact-free.
+- Replaced the old ENV GRA workflow with the main-panel SMOOTH control for grain taper/crossfade shaping in both forward and reverse playback.
+- PITCH and FORMANT now support two-decimal precision in the GUI and numeric prompt.

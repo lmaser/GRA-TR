@@ -994,8 +994,9 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				const float env = grainEnvelope (voiceA_[ch]);
 				const float sample = readGrainInterpolated (voiceA_[ch], (mode == 0) ? 0 : ch);
 
-				// Crossfade: fade-in
-				voiceA_[ch].fadeGain = juce::jmin (1.0f, voiceA_[ch].fadeGain + (1.0f / juce::jmax (1.0f, smoothedGrainLen_ * grainSmoothFraction_ * 0.5f)));
+				// Crossfade: fade-in using the grain's own locked length, so
+				// TIME changes after launch do not alter the entry slope mid-grain.
+				voiceA_[ch].fadeGain = juce::jmin (1.0f, voiceA_[ch].fadeGain + (1.0f / juce::jmax (1.0f, voiceA_[ch].grainLenSamples * grainSmoothFraction_ * 0.5f)));
 				wet += sample * env * voiceA_[ch].fadeGain;
 
 				// Advance read position (always forward; reverse mapping in readGrainInterpolated)
