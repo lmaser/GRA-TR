@@ -90,12 +90,13 @@ private:
             // For pitch (-24 to +24 semitones)
             if (owner != nullptr && this == &owner->pitchSlider)
             {
-                const int st = (int) std::lround (v);
-                if (st > 0) return "+" + juce::String (st);
-                return juce::String (st);
+                const double rounded2 = std::round (v * 100.0) / 100.0;
+                if (rounded2 > 0.0)
+                    return "+" + juce::String (rounded2, 2);
+                return juce::String (rounded2, 2);
             }
 
-            // For formant (-24 to +24 semitones)
+            // For formant (-12 to +12 semitones)
             if (owner != nullptr && this == &owner->formantSlider)
             {
                 const double rounded2 = std::round (v * 100.0) / 100.0;

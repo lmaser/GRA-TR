@@ -741,7 +741,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
 
     timeSlider.setNumDecimalPlacesToDisplay (1);
     modSlider.setNumDecimalPlacesToDisplay (2);
-    pitchSlider.setNumDecimalPlacesToDisplay (0);
+    pitchSlider.setNumDecimalPlacesToDisplay (2);
     formantSlider.setNumDecimalPlacesToDisplay (2);
     smoothSlider.setNumDecimalPlacesToDisplay (0);
     modeSlider.setNumDecimalPlacesToDisplay (0);
@@ -1066,7 +1066,8 @@ void GRATRAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
     auto isBarSlider = [&] (const juce::Slider* s)
     {
         return s == &timeSlider || s == &pitchSlider || s == &modeSlider || s == &modSlider
-            || s == &smoothSlider || s == &inputSlider || s == &outputSlider || s == &mixSlider;
+            || s == &formantSlider || s == &smoothSlider
+            || s == &inputSlider || s == &outputSlider || s == &mixSlider;
     };
 
     refreshLegendTextCache();
@@ -1099,9 +1100,9 @@ void GRATRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
         promptOverlay.toFront (false);
 
     const bool enableControls = ! shouldBeActive;
-    const std::array<juce::Component*, 13> interactiveControls {
-        &timeSlider, &pitchSlider, &modeSlider, &modSlider, &smoothSlider,
-        &inputSlider, &outputSlider, &mixSlider,
+    const std::array<juce::Component*, 14> interactiveControls {
+        &timeSlider, &pitchSlider, &modeSlider, &modSlider, &formantSlider,
+        &smoothSlider, &inputSlider, &outputSlider, &mixSlider,
         &syncButton, &autoButton, &triggerButton, &reverseButton, &midiButton
     };
     for (auto* control : interactiveControls)
@@ -1456,11 +1457,11 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
                 cachedModIntOnly = "X" + juce::String (mult, 2);
         }
 
-        const int pitchSt = (int) std::lround (pitchSlider.getValue());
-        if (pitchSt > 0)
-            cachedPitchIntOnly = "+" + juce::String (pitchSt) + "st";
-        else
-            cachedPitchIntOnly = juce::String (pitchSt) + "st";
+    const float pitchSt = std::round ((float) pitchSlider.getValue() * 100.0f) / 100.0f;
+    if (pitchSt > 0.0f)
+        cachedPitchIntOnly = "+" + juce::String (pitchSt, 2) + "st";
+    else
+        cachedPitchIntOnly = juce::String (pitchSt, 2) + "st";
 
         const float formantSt = std::round ((float) formantSlider.getValue() * 100.0f) / 100.0f;
         if (formantSt > 0.0f)
@@ -1607,18 +1608,16 @@ juce::String GRATRAudioProcessorEditor::getTimeTextShort() const
 
 juce::String GRATRAudioProcessorEditor::getPitchText() const
 {
-    const int st = (int) std::lround (pitchSlider.getValue());
-    if (st > 0) return "+" + juce::String (st) + " st PITCH";
-    if (st == 0) return "0 st PITCH";
-    return juce::String (st) + " st PITCH";
+    const float st = std::round ((float) pitchSlider.getValue() * 100.0f) / 100.0f;
+    if (st > 0.0f) return "+" + juce::String (st, 2) + " st PITCH";
+    return juce::String (st, 2) + " st PITCH";
 }
 
 juce::String GRATRAudioProcessorEditor::getPitchTextShort() const
 {
-    const int st = (int) std::lround (pitchSlider.getValue());
-    if (st > 0) return "+" + juce::String (st) + "st";
-    if (st == 0) return "0st";
-    return juce::String (st) + "st";
+    const float st = std::round ((float) pitchSlider.getValue() * 100.0f) / 100.0f;
+    if (st > 0.0f) return "+" + juce::String (st, 2) + "st";
+    return juce::String (st, 2) + "st";
 }
 
 juce::String GRATRAudioProcessorEditor::getFormantText() const
@@ -1820,13 +1819,13 @@ namespace
     constexpr const char* kModLegendShort  = "100%";
     constexpr const char* kModLegendInt    = "100%";
 
-    constexpr const char* kPitchLegendFull  = "+24 st PITCH";
-    constexpr const char* kPitchLegendShort = "+24st";
-    constexpr const char* kPitchLegendInt   = "+24st";
+constexpr const char* kPitchLegendFull  = "+24.00 st PITCH";
+constexpr const char* kPitchLegendShort = "+24.00st";
+constexpr const char* kPitchLegendInt   = "+24.00st";
 
-constexpr const char* kFormantLegendFull  = "-24.00 st FORMANT";
-constexpr const char* kFormantLegendShort = "-24.00st FMT";
-constexpr const char* kFormantLegendInt   = "-24.00st";
+constexpr const char* kFormantLegendFull  = "-12.00 st FORMANT";
+constexpr const char* kFormantLegendShort = "-12.00st FMT";
+constexpr const char* kFormantLegendInt   = "-12.00st";
 
     constexpr const char* kSmoothLegendFull  = "100% SMOOTH";
     constexpr const char* kSmoothLegendShort = "100% SMTH";
@@ -2286,8 +2285,8 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
         currentDisplay = juce::String (juce::jlimit (0.0, 100.0, s.getValue() * 100.0), 0);
     else if (&s == &pitchSlider)
     {
-        const int st = (int) std::lround (s.getValue());
-        currentDisplay = (st > 0) ? ("+" + juce::String (st)) : juce::String (st);
+        const float st = std::round ((float) s.getValue() * 100.0f) / 100.0f;
+        currentDisplay = (st > 0.0f) ? ("+" + juce::String (st, 2)) : juce::String (st, 2);
     }
     else if (&s == &formantSlider)
     {
@@ -2349,9 +2348,9 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
         if (&s == &timeSlider)
             worstCaseText = isTimeSyncMode ? "1/64T." : "10000.000";
         else if (&s == &pitchSlider)
-            worstCaseText = "+24";
+            worstCaseText = "+24.00";
         else if (&s == &formantSlider)
-            worstCaseText = "-24.00";
+            worstCaseText = "-12.00";
         else if (&s == &smoothSlider)
             worstCaseText = "100";
         else if (&s == &modSlider)
@@ -2439,8 +2438,8 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             if (isTimeSyncMode) { minVal = 0.0; maxVal = 29.0; maxDecs = 0; maxLen = 6; }
             else                { minVal = 0.0; maxVal = 10000.0; maxDecs = 3; maxLen = 9; }
         }
-        else if (&s == &pitchSlider)  { minVal = -24.0; maxVal = 24.0; maxDecs = 0; maxLen = 3; }
-        else if (&s == &formantSlider) { minVal = -24.0; maxVal = 24.0; maxDecs = 2; maxLen = 6; }
+        else if (&s == &pitchSlider)  { minVal = -24.0; maxVal = 24.0; maxDecs = 2; maxLen = 6; }
+        else if (&s == &formantSlider) { minVal = -12.0; maxVal = 12.0; maxDecs = 2; maxLen = 6; }
         else if (&s == &smoothSlider) { minVal = 0.0; maxVal = 100.0; maxDecs = 0; maxLen = 3; }
         else if (&s == &modSlider)    { minVal = 0.25;  maxVal = 4.0; maxDecs = 2; maxLen = 4; }
         else if (&s == &inputSlider)  { minVal = -100.0; maxVal = 0.0; maxDecs = 1; maxLen = 6; }
@@ -3082,247 +3081,6 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
 }
 
 // ── ENV GRA Prompt (TAU + AMT bars) ───────────────────────────────
-#if 0
-void GRATRAudioProcessorEditor::openEnvGraPrompt()
-{
-    lnf.setScheme (activeScheme);
-    const auto scheme = activeScheme;
-
-    const float currentTau = audioProcessor.apvts.getRawParameterValue (GRATRAudioProcessor::kParamEnvGraTau)->load();
-    const float currentAmt = audioProcessor.apvts.getRawParameterValue (GRATRAudioProcessor::kParamEnvGraAmt)->load();
-
-    auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
-    aw->setLookAndFeel (&lnf);
-
-    aw->addTextEditor ("tau", juce::String (juce::roundToInt (currentTau)), juce::String());
-    aw->addTextEditor ("amt", juce::String (juce::roundToInt (currentAmt)), juce::String());
-
-    struct PromptBar : public juce::Component
-    {
-        GRAScheme colours;
-        float value      = 0.5f;
-        float defaultVal = 0.5f;
-        std::function<void (float)> onValueChanged;
-        PromptBar (const GRAScheme& s, float initial01, float default01) : colours (s), value (initial01), defaultVal (default01) {}
-        void paint (juce::Graphics& g) override
-        {
-            const auto r = getLocalBounds().toFloat();
-            g.setColour (colours.outline); g.drawRect (r, 4.0f);
-            const float pad = 7.0f; auto inner = r.reduced (pad);
-            g.setColour (colours.bg); g.fillRect (inner);
-            const float fillW = juce::jlimit (0.0f, inner.getWidth(), inner.getWidth() * value);
-            g.setColour (colours.fg); g.fillRect (inner.withWidth (fillW));
-        }
-        void mouseDown (const juce::MouseEvent& e) override { updateFromMouse (e); }
-        void mouseDrag (const juce::MouseEvent& e) override { updateFromMouse (e); }
-        void mouseDoubleClick (const juce::MouseEvent&) override { setValue (defaultVal); }
-        void setValue (float v01) { value = juce::jlimit (0.0f, 1.0f, v01); repaint(); if (onValueChanged) onValueChanged (value); }
-    private:
-        void updateFromMouse (const juce::MouseEvent& e)
-        { const float pad = 7.0f; const float innerW = (float) getWidth() - pad * 2.0f; setValue (innerW > 0.0f ? ((float) e.x - pad) / innerW : 0.0f); }
-    };
-
-    struct ResetLabel : public juce::Label
-    { PromptBar* pairedBar = nullptr;
-      void mouseDoubleClick (const juce::MouseEvent&) override { if (pairedBar != nullptr) pairedBar->setValue (pairedBar->defaultVal); } };
-
-    const auto& f = kBoldFont40();
-    ResetLabel* tauSuffix = nullptr;
-    ResetLabel* amtSuffix = nullptr;
-    juce::Label* tauPctLabel = nullptr;
-    juce::Label* amtPctLabel = nullptr;
-
-    auto setupField = [&] (const char* editorId, const juce::String& suffixText,
-                           ResetLabel*& suffixOut, juce::Label*& pctOut)
-    {
-        if (auto* te = aw->getTextEditor (editorId))
-        {
-            te->setFont (f); te->applyFontToAllText (f);
-            te->setInputFilter (new PctInputFilter(), true);
-            auto r = te->getBounds();
-            r.setHeight ((int) (f.getHeight() * kPromptEditorHeightScale) + kPromptEditorHeightPadPx);
-            te->setBounds (r);
-
-            suffixOut = new ResetLabel();
-            suffixOut->setText (suffixText, juce::dontSendNotification);
-            suffixOut->setJustificationType (juce::Justification::centredLeft);
-            applyLabelTextColour (*suffixOut, scheme.text);
-            suffixOut->setBorderSize (juce::BorderSize<int> (0));
-            suffixOut->setFont (f);
-            aw->addAndMakeVisible (suffixOut);
-
-            pctOut = new juce::Label ("", "%");
-            pctOut->setJustificationType (juce::Justification::centredLeft);
-            applyLabelTextColour (*pctOut, scheme.text);
-            pctOut->setBorderSize (juce::BorderSize<int> (0));
-            pctOut->setFont (f);
-            aw->addAndMakeVisible (pctOut);
-        }
-    };
-
-    setupField ("tau", "TAU", tauSuffix, tauPctLabel);
-    setupField ("amt", "AMT", amtSuffix, amtPctLabel);
-
-    auto* tauBar = new PromptBar (scheme, currentTau * 0.01f, GRATRAudioProcessor::kEnvGraTauDefault * 0.01f);
-    auto* amtBar = new PromptBar (scheme, currentAmt * 0.01f, GRATRAudioProcessor::kEnvGraAmtDefault * 0.01f);
-    aw->addAndMakeVisible (tauBar);
-    aw->addAndMakeVisible (amtBar);
-
-    if (tauSuffix != nullptr) tauSuffix->pairedBar = tauBar;
-    if (amtSuffix != nullptr) amtSuffix->pairedBar = amtBar;
-
-    auto syncing = std::make_shared<bool> (false);
-
-    auto* tauApvts = audioProcessor.apvts.getParameter (GRATRAudioProcessor::kParamEnvGraTau);
-    auto* amtApvts = audioProcessor.apvts.getParameter (GRATRAudioProcessor::kParamEnvGraAmt);
-
-    auto barToText = [aw, syncing] (const char* editorId, float v01)
-    {
-        if (*syncing) return;
-        *syncing = true;
-        if (auto* te = aw->getTextEditor (editorId))
-        { te->setText (juce::String (juce::roundToInt (v01 * 100.0f)), juce::sendNotification); te->selectAll(); }
-        *syncing = false;
-    };
-
-    tauBar->onValueChanged = [barToText, tauApvts] (float v)
-    { barToText ("tau", v); if (tauApvts != nullptr) tauApvts->setValueNotifyingHost (tauApvts->convertTo0to1 (v * 100.0f)); };
-    amtBar->onValueChanged = [barToText, amtApvts] (float v)
-    { barToText ("amt", v); if (amtApvts != nullptr) amtApvts->setValueNotifyingHost (amtApvts->convertTo0to1 (v * 100.0f)); };
-
-    auto layoutRows = [aw, tauSuffix, amtSuffix, tauPctLabel, amtPctLabel, tauBar, amtBar] ()
-    {
-        auto* tauTe = aw->getTextEditor ("tau");
-        auto* amtTe = aw->getTextEditor ("amt");
-        if (tauTe == nullptr || amtTe == nullptr) return;
-
-        const int buttonsTop = getAlertButtonsTop (*aw);
-        const int rowH = tauTe->getHeight();
-        const int barH = juce::jmax (10, rowH / 2);
-        const int barGap = juce::jmax (2, rowH / 6);
-        const int rowTotal = rowH + barGap + barH;
-        const int gap = juce::jmax (4, rowH / 3);
-        const int totalH = rowTotal * 2 + gap;
-        const int startY = juce::jmax (kPromptEditorMinTopPx, (buttonsTop - totalH) / 2);
-
-        const int contentPad = kPromptInlineContentPadPx;
-        const int contentW = aw->getWidth() - contentPad * 2;
-        const auto& font = tauTe->getFont();
-        const int spaceW = juce::jmax (2, stringWidth (font, " "));
-        const int pctW = stringWidth (font, "%") + 2;
-
-        auto placeRow = [&] (juce::TextEditor* te, juce::Label* suffix, juce::Label* pctLabel, PromptBar* bar, int y)
-        {
-            if (te == nullptr || suffix == nullptr || bar == nullptr) return;
-            const int labelW = stringWidth (suffix->getFont(), suffix->getText()) + 2;
-            const auto txt = te->getText();
-            const int textW = juce::jmax (1, stringWidth (font, txt));
-            constexpr int kEditorTextPadPx = 12;
-            constexpr int kMinEditorWidthPx = 24;
-            const int editorW = juce::jlimit (kMinEditorWidthPx, 80, textW + kEditorTextPadPx * 2);
-            const int visualW = labelW + spaceW + textW + pctW;
-            const int centerX = contentPad + contentW / 2;
-            int blockLeft = juce::jlimit (contentPad, juce::jmax (contentPad, contentPad + contentW - visualW), centerX - visualW / 2);
-            suffix->setBounds (blockLeft, y, labelW, rowH);
-            int teX = blockLeft + labelW + spaceW - (editorW - textW) / 2;
-            teX = juce::jlimit (contentPad, juce::jmax (contentPad, contentPad + contentW - editorW), teX);
-            te->setBounds (teX, y, editorW, rowH);
-            if (pctLabel != nullptr)
-            { const int textRightX = blockLeft + labelW + spaceW + textW; pctLabel->setBounds (textRightX, y, pctW, rowH); }
-            const int barX = kPromptInnerMargin;
-            const int barW = juce::jmax (60, aw->getWidth() - kPromptInnerMargin * 2);
-            bar->setBounds (barX, y + rowH + barGap, barW, barH);
-        };
-
-        placeRow (tauTe, tauSuffix, tauPctLabel, tauBar, startY);
-        placeRow (amtTe, amtSuffix, amtPctLabel, amtBar, startY + rowTotal + gap);
-    };
-
-    auto textToBar = [syncing] (juce::TextEditor* te, PromptBar* bar, juce::RangedAudioParameter* apvtsParam)
-    {
-        if (*syncing || te == nullptr || bar == nullptr) return;
-        *syncing = true;
-        const float v = juce::jlimit (0.0f, 100.0f, (float) te->getText().getIntValue());
-        bar->value = v * 0.01f; bar->repaint();
-        if (apvtsParam != nullptr) apvtsParam->setValueNotifyingHost (apvtsParam->convertTo0to1 (v));
-        *syncing = false;
-    };
-
-    if (auto* tauTe = aw->getTextEditor ("tau"))
-        tauTe->onTextChange = [layoutRows, tauTe, tauBar, textToBar, tauApvts] () mutable
-        { textToBar (tauTe, tauBar, tauApvts); layoutRows(); };
-    if (auto* amtTe = aw->getTextEditor ("amt"))
-        amtTe->onTextChange = [layoutRows, amtTe, amtBar, textToBar, amtApvts] () mutable
-        { textToBar (amtTe, amtBar, amtApvts); layoutRows(); };
-
-    aw->addButton ("OK", 1, juce::KeyPress (juce::KeyPress::returnKey));
-    aw->addButton ("CANCEL", 0, juce::KeyPress (juce::KeyPress::escapeKey));
-    applyPromptShellSize (*aw);
-    layoutAlertWindowButtons (*aw);
-    layoutRows();
-
-    const juce::Font& kEnvGraFont = kBoldFont40();
-    preparePromptTextEditor (*aw, "tau", scheme.bg, scheme.text, scheme.fg, kEnvGraFont, false);
-    preparePromptTextEditor (*aw, "amt", scheme.bg, scheme.text, scheme.fg, kEnvGraFont, false);
-    layoutRows();
-
-    styleAlertButtons (*aw, lnf);
-
-    juce::Component::SafePointer<GRATRAudioProcessorEditor> safeThis (this);
-
-    if (safeThis != nullptr)
-    {
-        fitAlertWindowToEditor (*aw, safeThis.getComponent(), [layoutRows] (juce::AlertWindow& a)
-        { juce::ignoreUnused (a); layoutAlertWindowButtons (a); layoutRows(); });
-        embedAlertWindowInOverlay (safeThis.getComponent(), aw);
-    }
-    else
-    {
-        aw->centreAroundComponent (this, aw->getWidth(), aw->getHeight());
-        bringPromptWindowToFront (*aw);
-    }
-
-    {
-        preparePromptTextEditor (*aw, "tau", scheme.bg, scheme.text, scheme.fg, kEnvGraFont, false);
-        preparePromptTextEditor (*aw, "amt", scheme.bg, scheme.text, scheme.fg, kEnvGraFont, false);
-        layoutRows();
-
-        if (tauSuffix != nullptr)
-        { if (auto* te = aw->getTextEditor ("tau")) { tauSuffix->setFont (te->getFont()); if (tauPctLabel != nullptr) tauPctLabel->setFont (te->getFont()); } }
-        if (amtSuffix != nullptr)
-        { if (auto* te = aw->getTextEditor ("amt")) { amtSuffix->setFont (te->getFont()); if (amtPctLabel != nullptr) amtPctLabel->setFont (te->getFont()); } }
-        layoutRows();
-
-        juce::Component::SafePointer<juce::AlertWindow> safeAw (aw);
-        juce::MessageManager::callAsync ([safeAw]() { if (safeAw == nullptr) return; bringPromptWindowToFront (*safeAw); safeAw->repaint(); });
-    }
-
-    aw->enterModalState (true,
-        juce::ModalCallbackFunction::create (
-            [safeThis, aw, tauBar, amtBar,
-             savedTau = currentTau, savedAmt = currentAmt] (int result) mutable
-        {
-            std::unique_ptr<juce::AlertWindow> killer (aw);
-            if (safeThis != nullptr) safeThis->setPromptOverlayActive (false);
-            if (safeThis == nullptr) return;
-
-            if (result != 1)
-            {
-                if (auto* p = safeThis->audioProcessor.apvts.getParameter (GRATRAudioProcessor::kParamEnvGraTau))
-                    p->setValueNotifyingHost (p->convertTo0to1 (savedTau));
-                if (auto* p = safeThis->audioProcessor.apvts.getParameter (GRATRAudioProcessor::kParamEnvGraAmt))
-                    p->setValueNotifyingHost (p->convertTo0to1 (savedAmt));
-                return;
-            }
-
-            const float newTau = juce::jlimit (0.0f, 100.0f, tauBar->value * 100.0f);
-            const float newAmt = juce::jlimit (0.0f, 100.0f, amtBar->value * 100.0f);
-            safeThis->envGraDisplay.setTooltip (formatEnvGraTooltip (newTau, newAmt));
-        }),
-        false);
-}
-
-#endif
 //==============================================================================
 //  MIX SEND prompt (DRY + WET levels)
 //==============================================================================

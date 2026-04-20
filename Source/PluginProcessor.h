@@ -104,8 +104,8 @@ public:
 	static constexpr float kPitchMax     =  24.0f;
 	static constexpr float kPitchDefault =  0.0f;
 
-static constexpr float kFormantMin     = -24.0f;
-static constexpr float kFormantMax     =  24.0f;
+static constexpr float kFormantMin     = -12.0f;
+static constexpr float kFormantMax     =  12.0f;
 	static constexpr float kFormantDefault =  0.0f;
 
 	static constexpr float kSmoothMin     = 0.0f;
