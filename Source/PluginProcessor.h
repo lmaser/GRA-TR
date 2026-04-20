@@ -18,6 +18,7 @@ public:
 	static constexpr const char* kParamMod        = "mod";
 	static constexpr const char* kParamPitch      = "pitch";
 	static constexpr const char* kParamFormant    = "formant";
+	static constexpr const char* kParamSmooth     = "smooth";
 	static constexpr const char* kParamMode       = "mode";       // 0=MONO 1=STEREO 2=WIDE 3=DUAL
 	static constexpr const char* kParamInput      = "input";
 	static constexpr const char* kParamOutput     = "output";
@@ -34,9 +35,6 @@ public:
 	static constexpr const char* kParamAuto       = "auto_grain";
 	static constexpr const char* kParamTrigger    = "trigger";
 	static constexpr const char* kParamReverse    = "reverse";
-	static constexpr const char* kParamEnvGra     = "env_gra";
-	static constexpr const char* kParamEnvGraTau  = "env_gra_tau";
-	static constexpr const char* kParamEnvGraAmt  = "env_gra_amt";
 
 	// Filter parameter IDs
 	static constexpr const char* kParamFilterHpFreq  = "filter_hp_freq";
@@ -106,9 +104,13 @@ public:
 	static constexpr float kPitchMax     =  24.0f;
 	static constexpr float kPitchDefault =  0.0f;
 
-	static constexpr float kFormantMin     = -12.0f;
-	static constexpr float kFormantMax     =  12.0f;
+static constexpr float kFormantMin     = -24.0f;
+static constexpr float kFormantMax     =  24.0f;
 	static constexpr float kFormantDefault =  0.0f;
+
+	static constexpr float kSmoothMin     = 0.0f;
+	static constexpr float kSmoothMax     = 100.0f;
+	static constexpr float kSmoothDefault = 0.0f;
 
 	static constexpr float kInputMin     = -100.0f;
 	static constexpr float kInputMax     =  0.0f;
@@ -128,13 +130,6 @@ public:
 	static constexpr int   kInvPolDefault    = 0;   // 0=NONE  1=WET  2=GLOBAL
 	static constexpr int   kInvStrDefault    = 0;   // 0=NONE  1=WET  2=GLOBAL
 	static constexpr float kSqrt2Over2       = 0.707106781f;
-
-	static constexpr float kEnvGraTauMin     = 0.0f;
-	static constexpr float kEnvGraTauMax     = 100.0f;
-	static constexpr float kEnvGraTauDefault = 50.0f;
-	static constexpr float kEnvGraAmtMin     = 0.0f;
-	static constexpr float kEnvGraAmtMax     = 100.0f;
-	static constexpr float kEnvGraAmtDefault = 50.0f;
 
 	// Filter
 	static constexpr float kFilterFreqMin       = 20.0f;
@@ -401,9 +396,8 @@ private:
 
 	// Pan state ----------------------------------------------------
 
-	// Env Gra crossfade parameters (live) --------------------------
-	float envGraCrossfadeFraction_ = 0.5f;   // fraction of grain used for fade
-	float envGraAmountScaled_      = 0.5f;   // 0-1 depth
+	// Grain smoothing parameters (live) ----------------------------
+	float grainSmoothFraction_ = 0.02f;   // fraction of grain used for fade
 
 	// MIDI state ---------------------------------------------------
 	std::atomic<int>   lastMidiNote       { -1 };
@@ -424,6 +418,7 @@ private:
 	std::atomic<float>* modParam      = nullptr;
 	std::atomic<float>* pitchParam    = nullptr;
 	std::atomic<float>* formantParam  = nullptr;
+	std::atomic<float>* smoothParam   = nullptr;
 	std::atomic<float>* modeParam     = nullptr;
 	std::atomic<float>* inputParam    = nullptr;
 	std::atomic<float>* outputParam   = nullptr;
@@ -444,9 +439,6 @@ private:
 	std::atomic<float>* autoParam     = nullptr;
 	std::atomic<float>* triggerParam  = nullptr;
 	std::atomic<float>* reverseParam  = nullptr;
-	std::atomic<float>* envGraParam   = nullptr;
-	std::atomic<float>* envGraTauParam = nullptr;
-	std::atomic<float>* envGraAmtParam = nullptr;
 
 	std::atomic<float>* filterHpFreqParam  = nullptr;
 	std::atomic<float>* filterLpFreqParam  = nullptr;

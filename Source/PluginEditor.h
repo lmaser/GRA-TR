@@ -30,7 +30,6 @@ private:
 
     void openNumericEntryPopupForSlider (juce::Slider& s);
     void openMidiChannelPrompt();
-    void openEnvGraPrompt();
     void openFilterPrompt();
     void openChaosConfigPrompt (const char* amtParamId, const char* spdParamId, const juce::String& title);
     void openChaosFilterPrompt();
@@ -96,15 +95,19 @@ private:
                 return juce::String (st);
             }
 
-            // For formant (-12 to +12 semitones)
+            // For formant (-24 to +24 semitones)
             if (owner != nullptr && this == &owner->formantSlider)
             {
-                const int st = (int) std::lround (v);
-                if (st > 0) return "+" + juce::String (st);
-                return juce::String (st);
+                const double rounded2 = std::round (v * 100.0) / 100.0;
+                if (rounded2 > 0.0)
+                    return "+" + juce::String (rounded2, 2);
+                return juce::String (rounded2, 2);
             }
 
             // For mod (0-1 → x0.25 to x4.0 multiplier)
+            if (owner != nullptr && this == &owner->smoothSlider)
+                return juce::String ((int) std::lround (v));
+
             if (owner != nullptr && this == &owner->modSlider)
             {
                 const double mult = 1.0 / (4.0 - 6.0 * juce::jmin (v, 0.4999));
@@ -138,6 +141,7 @@ private:
     BarSlider modSlider;
     BarSlider pitchSlider;
     BarSlider formantSlider;
+    BarSlider smoothSlider;
     BarSlider modeSlider;
     BarSlider inputSlider;
     BarSlider outputSlider;
@@ -160,12 +164,10 @@ private:
     juce::ToggleButton autoButton;
     juce::ToggleButton triggerButton;
     juce::ToggleButton reverseButton;
-    juce::ToggleButton envGraButton;
     juce::ToggleButton chaosFilterButton;
     juce::ToggleButton chaosDelayButton;
 
     juce::Label midiChannelDisplay;
-    juce::Label envGraDisplay;
     juce::Label chaosFilterDisplay;
     juce::Label chaosDelayDisplay;
 
@@ -177,6 +179,7 @@ private:
     std::unique_ptr<SliderAttachment> modAttachment;
     std::unique_ptr<SliderAttachment> pitchAttachment;
     std::unique_ptr<SliderAttachment> formantAttachment;
+    std::unique_ptr<SliderAttachment> smoothAttachment;
     std::unique_ptr<SliderAttachment> modeAttachment;
     std::unique_ptr<SliderAttachment> inputAttachment;
     std::unique_ptr<SliderAttachment> outputAttachment;
@@ -200,7 +203,6 @@ private:
     std::unique_ptr<ButtonAttachment> autoAttachment;
     std::unique_ptr<ButtonAttachment> triggerAttachment;
     std::unique_ptr<ButtonAttachment> reverseAttachment;
-    std::unique_ptr<ButtonAttachment> envGraAttachment;
     std::unique_ptr<ButtonAttachment> chaosFilterAttachment;
     std::unique_ptr<ButtonAttachment> chaosDelayAttachment;
 
@@ -436,6 +438,9 @@ private:
     juce::String getFormantText() const;
     juce::String getFormantTextShort() const;
 
+    juce::String getSmoothText() const;
+    juce::String getSmoothTextShort() const;
+
     juce::String getModeText() const;
     juce::String getModeTextShort() const;
 
@@ -479,7 +484,6 @@ private:
     juce::Rectangle<int> getSyncLabelArea() const;
     juce::Rectangle<int> getAutoLabelArea() const;
     juce::Rectangle<int> getTriggerLabelArea() const;
-    juce::Rectangle<int> getEnvGraLabelArea() const;
     juce::Rectangle<int> getReverseLabelArea() const;
     juce::Rectangle<int> getMidiLabelArea() const;
     juce::Rectangle<int> getChaosLabelArea() const;
@@ -499,6 +503,8 @@ private:
     juce::String cachedPitchTextShort;
     juce::String cachedFormantTextFull;
     juce::String cachedFormantTextShort;
+    juce::String cachedSmoothTextFull;
+    juce::String cachedSmoothTextShort;
     juce::String cachedModeTextFull;
     juce::String cachedModeTextShort;
     juce::String cachedModTextFull;
@@ -518,6 +524,7 @@ private:
     juce::String cachedTimeIntOnly;
     juce::String cachedPitchIntOnly;
     juce::String cachedFormantIntOnly;
+    juce::String cachedSmoothIntOnly;
     juce::String cachedModeIntOnly;
     juce::String cachedModIntOnly;
     juce::String cachedInputIntOnly;
@@ -539,7 +546,7 @@ private:
 
     HorizontalLayoutMetrics cachedHLayout_;
     VerticalLayoutMetrics cachedVLayout_;
-    std::array<juce::Rectangle<int>, 10> cachedValueAreas_;
+    std::array<juce::Rectangle<int>, 11> cachedValueAreas_;
     juce::Rectangle<int> cachedFilterValueArea_;
     juce::Rectangle<int> cachedPanValueArea_;
     juce::Rectangle<int> cachedLimThresholdValueArea_;
@@ -549,6 +556,7 @@ private:
     bool ioSectionExpanded_ = false;
 
     static constexpr double kDefaultTimeMs = (double) GRATRAudioProcessor::kTimeMsDefault;
+    static constexpr double kDefaultSmooth = (double) GRATRAudioProcessor::kSmoothDefault;
     static constexpr double kDefaultMix = (double) GRATRAudioProcessor::kMixDefault;
     static constexpr double kDefaultInput = (double) GRATRAudioProcessor::kInputDefault;
     static constexpr double kDefaultOutput = (double) GRATRAudioProcessor::kOutputDefault;

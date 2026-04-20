@@ -147,6 +147,7 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	modParam      = apvts.getRawParameterValue (kParamMod);
 	pitchParam    = apvts.getRawParameterValue (kParamPitch);
 	formantParam  = apvts.getRawParameterValue (kParamFormant);
+	smoothParam   = apvts.getRawParameterValue (kParamSmooth);
 	modeParam     = apvts.getRawParameterValue (kParamMode);
 	inputParam    = apvts.getRawParameterValue (kParamInput);
 	outputParam   = apvts.getRawParameterValue (kParamOutput);
@@ -167,9 +168,6 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	autoParam     = apvts.getRawParameterValue (kParamAuto);
 	triggerParam  = apvts.getRawParameterValue (kParamTrigger);
 	reverseParam  = apvts.getRawParameterValue (kParamReverse);
-	envGraParam   = apvts.getRawParameterValue (kParamEnvGra);
-	envGraTauParam = apvts.getRawParameterValue (kParamEnvGraTau);
-	envGraAmtParam = apvts.getRawParameterValue (kParamEnvGraAmt);
 
 	filterHpFreqParam  = apvts.getRawParameterValue (kParamFilterHpFreq);
 	filterLpFreqParam  = apvts.getRawParameterValue (kParamFilterLpFreq);
@@ -593,7 +591,7 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 	const float pos = v.reverse ? (v.grainLenSamples - v.readPos) : v.readPos;
 	const float remaining = v.grainLenSamples - pos;
 
-	// Taper length: fraction of grain used for fade-in/out (from ENV GRA)
+	// Taper length: fraction of grain used for fade-in/out (from SMOOTH)
 	// Minimum must cover at least 2x the pitch ratio step so the fade-out
 	// zone can't be entirely skipped in a single read advance.
 	// Cap to 40% of grain so both tapers (in+out) never exceed 80% - the
@@ -601,7 +599,7 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 	const float minTaper = juce::jmax (2.0f, v.pitchRatio * 2.0f);
 	const float maxTaper = juce::jmax (2.0f, v.grainLenSamples * 0.4f);
 	const float taperLen = juce::jmin (maxTaper,
-	                                   juce::jmax (minTaper, envGraCrossfadeFraction_ * v.grainLenSamples * 0.5f));
+	                                   juce::jmax (minTaper, grainSmoothFraction_ * v.grainLenSamples * 0.5f));
 
 	if (pos < taperLen)
 		return taperWeight (pos, taperLen);
@@ -672,7 +670,6 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const bool autoEnabled    = loadBoolParamOrDefault (autoParam, false);
 	const bool triggerParamOn = loadBoolParamOrDefault (triggerParam, false);
 	const bool reverseEnabled = loadBoolParamOrDefault (reverseParam, false);
-	const bool envGraEnabled  = loadBoolParamOrDefault (envGraParam, false);
 	const int  midiNote       = lastMidiNote.load (std::memory_order_relaxed);
 	const bool midiNoteActive = midiEnabled && (midiNote >= 0);
 	const bool triggerEnabled = triggerParamOn || midiNoteActive;
@@ -781,21 +778,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	targetGrainLen_ = effectiveGrainLen;
 
-	// ENV GRA: crossfade envelope parameters
-	if (envGraEnabled)
-	{
-		const float tauPct = loadAtomicOrDefault (envGraTauParam, kEnvGraTauDefault) * 0.01f;
-		const float amtPct = loadAtomicOrDefault (envGraAmtParam, kEnvGraAmtDefault) * 0.01f;
-		// TAU controls the taper fraction (0 = no taper, 1 = full Hann window)
-		// AMT scales the depth: 0 = minimal taper (as if off), 1 = full tau effect
-		const float fullTaper = 0.02f + tauPct * 0.98f;
-		envGraCrossfadeFraction_ = 0.02f + amtPct * (fullTaper - 0.02f);
-	}
-	else
-	{
-		envGraCrossfadeFraction_ = 0.02f;  // minimal taper when disabled
-		envGraAmountScaled_ = 0.0f;
-	}
+	// SMOOTH: shared taper amount for forward and reverse grain playback.
+	const float smoothPct = juce::jlimit (0.0f, 1.0f,
+		loadAtomicOrDefault (smoothParam, kSmoothDefault) * 0.01f);
+	grainSmoothFraction_ = 0.02f + smoothPct * 0.98f;
 
 	// Load filter / tilt / chaos per-block -------------------------
 	wetFilterHpOn_ = loadBoolParamOrDefault (filterHpOnParam, false);
@@ -1009,7 +995,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				const float sample = readGrainInterpolated (voiceA_[ch], (mode == 0) ? 0 : ch);
 
 				// Crossfade: fade-in
-				voiceA_[ch].fadeGain = juce::jmin (1.0f, voiceA_[ch].fadeGain + (1.0f / juce::jmax (1.0f, smoothedGrainLen_ * envGraCrossfadeFraction_ * 0.5f)));
+				voiceA_[ch].fadeGain = juce::jmin (1.0f, voiceA_[ch].fadeGain + (1.0f / juce::jmax (1.0f, smoothedGrainLen_ * grainSmoothFraction_ * 0.5f)));
 				wet += sample * env * voiceA_[ch].fadeGain;
 
 				// Advance read position (always forward; reverse mapping in readGrainInterpolated)
@@ -1049,7 +1035,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				const float sample = readGrainInterpolated (voiceB_[ch], (mode == 0) ? 0 : ch);
 
 				// Crossfade: fade-out (use voice's own stored grain length for consistency)
-				voiceB_[ch].fadeGain -= (1.0f / juce::jmax (1.0f, voiceB_[ch].grainLenSamples * envGraCrossfadeFraction_ * 0.5f));
+				voiceB_[ch].fadeGain -= (1.0f / juce::jmax (1.0f, voiceB_[ch].grainLenSamples * grainSmoothFraction_ * 0.5f));
 				if (voiceB_[ch].fadeGain <= 0.0f)
 				{
 					voiceB_[ch].active = false;
@@ -1292,6 +1278,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 		juce::NormalisableRange<float> (kFormantMin, kFormantMax, 0.01f, 1.0f), kFormantDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
+		kParamSmooth, "Smooth",
+		juce::NormalisableRange<float> (kSmoothMin, kSmoothMax, 0.01f, 1.0f), kSmoothDefault));
+
+	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamMode, "Style",
 		juce::NormalisableRange<float> ((float) kModeMin, (float) kModeMax, 1.0f, 1.0f), kModeDefault));
 
@@ -1346,14 +1336,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamAuto, "Auto", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamTrigger, "Trigger", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamReverse, "Reverse", false));
-
-	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamEnvGra, "Env Gra", false));
-	params.push_back (std::make_unique<juce::AudioParameterFloat> (
-		kParamEnvGraTau, "Env Gra Tau",
-		juce::NormalisableRange<float> (kEnvGraTauMin, kEnvGraTauMax, 0.01f, 1.0f), kEnvGraTauDefault));
-	params.push_back (std::make_unique<juce::AudioParameterFloat> (
-		kParamEnvGraAmt, "Env Gra Amt",
-		juce::NormalisableRange<float> (kEnvGraAmtMin, kEnvGraAmtMax, 0.01f, 1.0f), kEnvGraAmtDefault));
 
 	// HP/LP wet-signal filter
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
