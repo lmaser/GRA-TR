@@ -252,12 +252,15 @@ private:
 	{
 		int   anchorWritePos   = 0;       // write-pos snapshot when grain was captured
 		float grainLenSamples  = 0.0f;    // locked grain length in samples
+		float sourceLenSamples = 0.0f;    // locked source window length in samples
+		float backNForthLegLenSamples = 0.0f;
 		float readPos          = 0.0f;    // fractional read position within grain
 		float fadeGain         = 0.0f;    // crossfade envelope (0->1 fade-in, 1->0 fade-out)
 		float pitchRatio       = 1.0f;    // locked pitch ratio at launch time
 		float smoothFraction   = 0.02f;   // locked taper/fade amount at launch time
 		bool  active           = false;
 		bool  reverse          = false;   // play this grain backwards
+		bool  backNForth       = false;   // ping-pong inside this grain cycle
 	};
 
 	GrainVoice voiceA_[2];     // primary voice per channel
@@ -273,9 +276,6 @@ private:
 	bool  grainSizeTransitionActive_ = false;
 	bool  prevTriggerState_   = false;    // edge-detect for TRIGGER toggle
 	bool  lastAutoEnabled_    = false;
-	bool  backNForthNextReverse_ = false;
-	bool  lastBackNForthEnabled_ = false;
-	bool  lastBackNForthSeedReverse_ = false;
 
 	struct HostTransportMonitor
 	{
@@ -732,7 +732,8 @@ private:
 	}
 
 	// Grain helpers -----------------------------------------------
-	void launchNewGrain (int ch, float grainLenSamples, bool reverseGrain);
+	void launchNewGrain (int ch, float grainLenSamples, float sourceLenSamples, bool reverseGrain,
+	                     bool backNForthGrain = false, int anchorOffsetSamples = 0);
 	float readGrainInterpolated (const GrainVoice& v, int ch) const;
 	float grainEnvelope (const GrainVoice& v) const;
 	void resetGranularSchedulersForDeterministicStart (bool reverseEnabled) noexcept;

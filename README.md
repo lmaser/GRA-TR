@@ -193,9 +193,13 @@ Reverse grain playback. When enabled, each grain is read backward, producing rev
 
 ### BNF (Back N Forth)
 
-Back N Forth playback. When enabled, grain direction alternates between reverse and forward on each launch, creating a back-and-forth loop motion.
+Back N Forth playback. When enabled, each grain cycle plays as a ping-pong motion: one half in the starting direction and the second half in the opposite direction.
 
-RVS controls the starting direction: with RVS off, BNF starts forward then reverses; with RVS on, BNF starts reverse then returns forward. AUTO, TRG, and internal relaunches all consume the same deterministic direction sequence.
+RVS controls the starting direction: with RVS off, BNF starts forward then reverses; with RVS on, BNF starts reverse then returns forward.
+
+For manual TIME and SYNC modes, BNF treats the current TIME/SYNC + MOD period as the event length. Each event is split internally into two equal legs: starting direction first, opposite direction second. If a setting produces eight grain events, BNF still produces eight events; each one contains its own forward+reverse or reverse+forward motion.
+
+The source window is locked to one leg and read back in both directions, so pitch/formant changes cannot shorten one half or cut the return leg early.
 
 ### CHAOS
 
@@ -250,7 +254,7 @@ Modes:
 - **Pitch**: Read rate = `2^(semitones/12)`. Grains advance by pitch ratio each sample.
 - **Formant**: Capture length = `effectiveGrainLen / 2^(formantSemitones/12)`. Scales capture window independently from pitch.
 - **Reverse**: Read position always advances forward; reverse mapping (`grainLen - 1 - readPos`) is applied in the read function so reverse playback starts on the last valid sample inside the captured grain.
-- **Back N Forth**: Direction alternates deterministically per grain launch. RVS seeds the initial direction.
+- **Back N Forth**: Direction turns inside each grain event. RVS seeds the initial direction. The active TIME/SYNC + MOD period remains the event period; BNF splits that event into two equal legs and stores a separate one-leg source-window length so pitch/formant shaping does not move the temporal midpoint or reset the envelope.
 - **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, pitch ratio, formant ratio, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide. Large TIME/MOD/SYNC size transitions apply a temporary minimum grain taper and slower grain-length glide to avoid discontinuities without changing steady-state playback.
 - **Wet filter**: Biquad HP/LP on the wet signal. Transposed Direct Form II. Coefficients updated once per block.
 - **Tilt EQ**: First-order symmetric shelf at 1 kHz. Coefficients cached with tolerance-based update.

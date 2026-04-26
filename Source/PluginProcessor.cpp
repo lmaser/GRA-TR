@@ -282,9 +282,6 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	grainSizeTransitionActive_ = false;
 	prevTriggerState_ = false;
 	lastAutoEnabled_  = false;
-	backNForthNextReverse_ = false;
-	lastBackNForthEnabled_ = false;
-	lastBackNForthSeedReverse_ = false;
 	hostTransport_.reset();
 
 	currentPitchRatio_ = 1.0f;
@@ -449,12 +446,10 @@ void GRATRAudioProcessor::updateHostTransportMonitor (
 
 void GRATRAudioProcessor::resetGranularSchedulersForDeterministicStart (bool reverseEnabled) noexcept
 {
+	juce::ignoreUnused (reverseEnabled);
 	autoPhaseCounter_ = 0.0f;
 	prevTriggerState_ = false;
 	lastAutoEnabled_ = false;
-	backNForthNextReverse_ = reverseEnabled;
-	lastBackNForthEnabled_ = false;
-	lastBackNForthSeedReverse_ = reverseEnabled;
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -641,7 +636,8 @@ void GRATRAudioProcessor::tiltWetSample (float& wetL, float& wetR)
 //==============================================================================
 // Grain helpers
 
-void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, bool reverseGrain)
+void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float sourceLenSamples, bool reverseGrain,
+                                          bool backNForthGrain, int anchorOffsetSamples)
 {
 	const int wrapMask = grainBufferLength - 1;
 
@@ -657,13 +653,26 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, bool re
 	// Setup new voice A (fade-in)
 	GrainVoice& v = voiceA_[ch];
 	v.grainLenSamples = grainLenSamples;
+	v.sourceLenSamples = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2), sourceLenSamples);
+	v.backNForth = backNForthGrain;
+	v.backNForthLegLenSamples = backNForthGrain
+		? juce::jlimit (1.0f, grainLenSamples, grainLenSamples * 0.5f)
+		: grainLenSamples;
 	v.active = true;
 	v.reverse = reverseGrain;
 	v.pitchRatio = smoothedPitchRatio_;
 	v.smoothFraction = grainSmoothFraction_;
 
-	// Anchor: start reading from grainLen samples before current writePos
-	v.anchorWritePos = (grainBufferWritePos - (int) grainLenSamples) & wrapMask;
+	const float bnfReadSpanSamples = backNForthGrain
+		? juce::jlimit (1.0f, (float) (grainBufferLength - 2),
+		                 juce::jmax (1.0f, v.backNForthLegLenSamples - 1.0f) * v.pitchRatio + 1.0f)
+		: grainLenSamples;
+	const float anchorLenSamples = backNForthGrain
+		? juce::jmax (v.sourceLenSamples, bnfReadSpanSamples)
+		: grainLenSamples;
+
+	// BNF anchors one leg of source audio; the second leg reads the same window backward.
+	v.anchorWritePos = (grainBufferWritePos - (int) anchorLenSamples + anchorOffsetSamples) & wrapMask;
 
 	// Read position always starts at 0; reverse mapping is handled in readGrainInterpolated
 	v.readPos = 0.0f;
@@ -672,17 +681,34 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, bool re
 
 float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) const
 {
-	if (!v.active || v.grainLenSamples < 1.0f)
+	if (!v.active || v.grainLenSamples < 1.0f || v.sourceLenSamples < 1.0f)
 		return 0.0f;
 
 	const int wrapMask = grainBufferLength - 1;
 	const auto* buf = grainBuffer.getReadPointer (ch);
 
-	// Map readPos within grain to buffer position. Reverse starts at the last
-	// valid sample inside the captured grain, not one sample past the window.
-	const float readOffset = v.reverse
-		? juce::jmax (0.0f, (v.grainLenSamples - 1.0f) - v.readPos)
-		: v.readPos;
+	// Map readPos within grain to buffer position. BNF performs the direction
+	// turn inside the same voice so the midpoint does not relaunch or re-envelope.
+	float readOffset = 0.0f;
+	if (v.backNForth)
+	{
+		const float legLen = juce::jlimit (1.0f, v.grainLenSamples, v.backNForthLegLenSamples);
+		const bool secondLeg = v.readPos >= legLen;
+		const bool reverseLeg = secondLeg ? ! v.reverse : v.reverse;
+		const float legPos = juce::jlimit (0.0f, juce::jmax (0.0f, legLen - 1.0f),
+		                                   secondLeg ? (v.readPos - legLen) : v.readPos);
+		const float legSpan = juce::jmax (1.0f, legLen - 1.0f);
+		const float readSpan = juce::jlimit (0.0f, (float) (grainBufferLength - 3), legSpan * v.pitchRatio);
+		const float travel = juce::jlimit (0.0f, readSpan, legPos * v.pitchRatio);
+		readOffset = reverseLeg ? (readSpan - travel) : travel;
+	}
+	else
+	{
+		// Reverse starts at the last valid sample inside the captured grain.
+		readOffset = v.reverse
+			? juce::jmax (0.0f, (v.sourceLenSamples - 1.0f) - v.readPos)
+			: v.readPos;
+	}
 	const float bufPos = (float) v.anchorWritePos + readOffset;
 
 	const int idx0  = ((int) bufPos) & wrapMask;
@@ -704,7 +730,7 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 		return 0.0f;
 
 	// Tukey-windowed envelope with configurable taper fraction
-	const float pos = v.reverse ? (v.grainLenSamples - v.readPos) : v.readPos;
+	const float pos = (v.backNForth || ! v.reverse) ? v.readPos : (v.grainLenSamples - v.readPos);
 	const float remaining = v.grainLenSamples - pos;
 
 	// Taper length: fraction of grain used for fade-in/out (from SMOOTH)
@@ -866,7 +892,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	float grainLenSamples = (float) currentSampleRate * (targetGrainMs / 1000.0f);
 	grainLenSamples = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2), grainLenSamples);
 
-	// Apply MOD multiplier: higher multiplier -> shorter grain -> higher frequency
+	// Apply MOD multiplier: higher multiplier -> shorter grain -> higher frequency.
+	// This is the perceptual event period; BNF splits each event into forward/reverse legs.
 	const float effectiveGrainLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
 	                                              grainLenSamples / modFreqMultiplier);
 	const double syncedAutoPeriodPpq = (syncEnabled && hostBpm > 0.0 && modFreqMultiplier > 0.0f)
@@ -1058,47 +1085,6 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const bool autoJustEnabled = autoEnabled && !lastAutoEnabled_;
 	lastAutoEnabled_ = autoEnabled;
 
-	if (! backNForthEnabled)
-	{
-		backNForthNextReverse_ = reverseEnabled;
-	}
-	else if (! lastBackNForthEnabled_ || reverseEnabled != lastBackNForthSeedReverse_)
-	{
-		backNForthNextReverse_ = reverseEnabled;
-	}
-
-	if (backNForthEnabled && (triggerEdge || autoJustEnabled))
-		backNForthNextReverse_ = reverseEnabled;
-
-	lastBackNForthEnabled_ = backNForthEnabled;
-	lastBackNForthSeedReverse_ = reverseEnabled;
-
-	auto markBackNForthLaunch = [this, backNForthEnabled] (bool launchedReverse)
-	{
-		if (backNForthEnabled)
-			backNForthNextReverse_ = ! launchedReverse;
-	};
-
-	auto consumeLaunchReverse = [&]() -> bool
-	{
-		if (! backNForthEnabled)
-			return reverseEnabled;
-
-		const bool launchReverse = backNForthNextReverse_;
-		markBackNForthLaunch (launchReverse);
-		return launchReverse;
-	};
-
-	auto relaunchReverseForVoice = [&] (const GrainVoice& voice) -> bool
-	{
-		if (! backNForthEnabled)
-			return reverseEnabled;
-
-		const bool launchReverse = ! voice.reverse;
-		markBackNForthLaunch (launchReverse);
-		return launchReverse;
-	};
-
 	// Per-sample processing ----------------------------------------
 	const int wrapMask = grainBufferLength - 1;
 	auto* bufL = grainBuffer.getWritePointer (0);
@@ -1133,6 +1119,12 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		// Capture length from smoothed grain length & formant ratio
 		const float captureLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
 		                                       smoothedGrainLen_ / smoothedFormantRatio_);
+		const float bnfEventLen = smoothedGrainLen_;
+		const float bnfLegLen = bnfEventLen * 0.5f;
+		const float bnfSourceLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
+		                                         bnfLegLen / smoothedFormantRatio_);
+		const float launchGrainLen = backNForthEnabled ? bnfEventLen : captureLen;
+		const float launchSourceLen = backNForthEnabled ? bnfSourceLen : captureLen;
 
 		// Read input
 		float inL = (channelL != nullptr) ? channelL[i] * smoothedInputGain : 0.0f;
@@ -1181,33 +1173,32 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 		if (shouldLaunch)
 		{
-			const bool launchReverse = consumeLaunchReverse();
+			const bool launchReverse = reverseEnabled;
+			const int decorrelationOffsetSamples = - (int) (launchSourceLen * 0.5f);
 
 			if (mode == 0) // MONO: same grain for both channels
 			{
-				launchNewGrain (0, captureLen, launchReverse);
-				launchNewGrain (1, captureLen, launchReverse);
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
+				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
 				// Sync voice anchors for mono
 				voiceA_[1].anchorWritePos = voiceA_[0].anchorWritePos;
 			}
 			else if (mode == 2) // WIDE: temporal decorrelation + M/S widening
 			{
-				launchNewGrain (0, captureLen, launchReverse);
-				launchNewGrain (1, captureLen, launchReverse);
-				// Offset R anchor by half grain for channel decorrelation
-				voiceA_[1].anchorWritePos = (voiceA_[1].anchorWritePos - (int)(captureLen * 0.5f)) & wrapMask;
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
+				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled, decorrelationOffsetSamples);
 			}
 			else if (mode == 3) // DUAL: R at x0.5 pitch (octave down) + temporal offset
 			{
-				launchNewGrain (0, captureLen, launchReverse);
-				launchNewGrain (1, captureLen, launchReverse);
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
+				launchNewGrain (1, launchGrainLen, backNForthEnabled ? launchSourceLen * 0.5f : launchSourceLen,
+				                launchReverse, backNForthEnabled, decorrelationOffsetSamples);
 				voiceA_[1].pitchRatio = smoothedPitchRatio_ * 0.5f;
-				voiceA_[1].anchorWritePos = (voiceA_[1].anchorWritePos - (int)(captureLen * 0.5f)) & wrapMask;
 			}
 			else // STEREO (default): independent per-channel
 			{
-				launchNewGrain (0, captureLen, launchReverse);
-				launchNewGrain (1, captureLen, launchReverse);
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
+				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
 			}
 		}
 
@@ -1230,7 +1221,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				wet += sample * env * voiceA_[ch].fadeGain;
 
 				// Advance read position (always forward; reverse mapping in readGrainInterpolated)
-				voiceA_[ch].readPos += voiceA_[ch].pitchRatio;
+				voiceA_[ch].readPos += voiceA_[ch].backNForth ? 1.0f : voiceA_[ch].pitchRatio;
 				if (voiceA_[ch].readPos >= voiceA_[ch].grainLenSamples || voiceA_[ch].readPos < 0.0f)
 				{
 					if (autoEnabled || triggerEnabled)
@@ -1238,18 +1229,19 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 						// Immediate relaunch: prevents silence gaps when pitch > 1
 						// or formant > 0 causes the grain to end before the auto
 						// phase counter triggers the next one.
-						const bool launchReverse = relaunchReverseForVoice (voiceA_[ch]);
-						launchNewGrain (ch, captureLen, launchReverse);
-						// WIDE: R channel offset anchor for temporal decorrelation
-						if (mode == 2 && ch == 1)
-						{
-							voiceA_[1].anchorWritePos = (voiceA_[1].anchorWritePos - (int)(captureLen * 0.5f)) & wrapMask;
-						}
+						const bool launchReverse = reverseEnabled;
+						const int relaunchAnchorOffsetSamples = ((mode == 2 || mode == 3) && ch == 1)
+							? - (int) (launchSourceLen * 0.5f)
+							: 0;
+						const float relaunchSourceLen = (mode == 3 && ch == 1 && backNForthEnabled)
+							? launchSourceLen * 0.5f
+							: launchSourceLen;
+						launchNewGrain (ch, launchGrainLen, relaunchSourceLen,
+						                launchReverse, backNForthEnabled, relaunchAnchorOffsetSamples);
 						// DUAL: R channel plays at x0.5 pitch (octave down) + offset anchor
 						if (mode == 3 && ch == 1)
 						{
 							voiceA_[1].pitchRatio = smoothedPitchRatio_ * 0.5f;
-							voiceA_[1].anchorWritePos = (voiceA_[1].anchorWritePos - (int)(captureLen * 0.5f)) & wrapMask;
 						}
 						autoPhaseCounter_ = 0.0f;
 					}
@@ -1276,7 +1268,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				else
 				{
 					wet += sample * env * voiceB_[ch].fadeGain;
-					voiceB_[ch].readPos += voiceB_[ch].pitchRatio;
+					voiceB_[ch].readPos += voiceB_[ch].backNForth ? 1.0f : voiceB_[ch].pitchRatio;
 					if (voiceB_[ch].readPos >= voiceB_[ch].grainLenSamples || voiceB_[ch].readPos < 0.0f)
 						voiceB_[ch].active = false;
 				}
