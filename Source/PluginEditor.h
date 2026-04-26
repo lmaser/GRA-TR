@@ -165,6 +165,7 @@ private:
     juce::ToggleButton autoButton;
     juce::ToggleButton triggerButton;
     juce::ToggleButton reverseButton;
+    juce::ToggleButton backNForthButton;
     juce::ToggleButton chaosFilterButton;
     juce::ToggleButton chaosDelayButton;
 
@@ -204,6 +205,7 @@ private:
     std::unique_ptr<ButtonAttachment> autoAttachment;
     std::unique_ptr<ButtonAttachment> triggerAttachment;
     std::unique_ptr<ButtonAttachment> reverseAttachment;
+    std::unique_ptr<ButtonAttachment> backNForthAttachment;
     std::unique_ptr<ButtonAttachment> chaosFilterAttachment;
     std::unique_ptr<ButtonAttachment> chaosDelayAttachment;
 
@@ -486,6 +488,7 @@ private:
     juce::Rectangle<int> getAutoLabelArea() const;
     juce::Rectangle<int> getTriggerLabelArea() const;
     juce::Rectangle<int> getReverseLabelArea() const;
+    juce::Rectangle<int> getBackNForthLabelArea() const;
     juce::Rectangle<int> getMidiLabelArea() const;
     juce::Rectangle<int> getChaosLabelArea() const;
     juce::Rectangle<int> getInfoIconArea() const;

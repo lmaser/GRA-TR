@@ -14,7 +14,6 @@
       <FILE id="jiBlET" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
       <FILE id="Crt001" name="CrtEffect.h" compile="0" resource="0" file="Source/CrtEffect.h"/>
       <FILE id="Trs001" name="TRSharedUI.h" compile="0" resource="0" file="Source/TRSharedUI.h"/>
-      <FILE id="Prf001" name="PerfTrace.h" compile="0" resource="0" file="Source/PerfTrace.h"/>
       <FILE id="Inf001" name="InfoContent.h" compile="0" resource="0" file="Source/InfoContent.h"/>
     </GROUP>
   </MAINGROUP>

@@ -807,12 +807,14 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     triggerButton.setButtonText ("");
     midiButton.setButtonText ("");
     reverseButton.setButtonText ("");
+    backNForthButton.setButtonText ("");
 
     addAndMakeVisible (syncButton);
     addAndMakeVisible (autoButton);
     addAndMakeVisible (triggerButton);
     addAndMakeVisible (midiButton);
     addAndMakeVisible (reverseButton);
+    addAndMakeVisible (backNForthButton);
 
     // MIDI channel tooltip overlay
     const int savedChannel = audioProcessor.getMidiChannel();
@@ -957,6 +959,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     bindButton (triggerAttachment, GRATRAudioProcessor::kParamTrigger, triggerButton);
     bindButton (midiAttachment, GRATRAudioProcessor::kParamMidi, midiButton);
     bindButton (reverseAttachment, GRATRAudioProcessor::kParamReverse, reverseButton);
+    bindButton (backNForthAttachment, GRATRAudioProcessor::kParamBackNForth, backNForthButton);
     bindButton (chaosFilterAttachment, GRATRAudioProcessor::kParamChaos, chaosFilterButton);
     bindButton (chaosDelayAttachment, GRATRAudioProcessor::kParamChaosD, chaosDelayButton);
 
@@ -1100,10 +1103,10 @@ void GRATRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
         promptOverlay.toFront (false);
 
     const bool enableControls = ! shouldBeActive;
-    const std::array<juce::Component*, 14> interactiveControls {
+    const std::array<juce::Component*, 15> interactiveControls {
         &timeSlider, &pitchSlider, &modeSlider, &modSlider, &formantSlider,
         &smoothSlider, &inputSlider, &outputSlider, &mixSlider,
-        &syncButton, &autoButton, &triggerButton, &reverseButton, &midiButton
+        &syncButton, &autoButton, &triggerButton, &reverseButton, &backNForthButton, &midiButton
     };
     for (auto* control : interactiveControls)
         control->setEnabled (enableControls);
@@ -4283,7 +4286,12 @@ juce::Rectangle<int> GRATRAudioProcessorEditor::getTriggerLabelArea() const
 
 juce::Rectangle<int> GRATRAudioProcessorEditor::getReverseLabelArea() const
 {
-    return makeToggleLabelArea (reverseButton, getWidth() - kToggleLegendCollisionPadPx, "REVERSE", "RVS");
+    return makeToggleLabelArea (reverseButton, backNForthButton.getX() - kToggleLegendCollisionPadPx, "REVERSE", "RVS");
+}
+
+juce::Rectangle<int> GRATRAudioProcessorEditor::getBackNForthLabelArea() const
+{
+    return makeToggleLabelArea (backNForthButton, getWidth() - kToggleLegendCollisionPadPx, "BACK N FORTH", "BNF");
 }
 
 juce::Rectangle<int> GRATRAudioProcessorEditor::getMidiLabelArea() const
@@ -4383,6 +4391,12 @@ void GRATRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     if (reverseButton.isVisible() && getReverseLabelArea().contains (p))
     {
         reverseButton.setToggleState (! reverseButton.getToggleState(), juce::sendNotificationSync);
+        return;
+    }
+
+    if (backNForthButton.isVisible() && getBackNForthLabelArea().contains (p))
+    {
+        backNForthButton.setToggleState (! backNForthButton.getToggleState(), juce::sendNotificationSync);
         return;
     }
 
@@ -4711,8 +4725,9 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
 
         if (reverseButton.isVisible())
         {
-        // Row 1: RVS
-        const int rvsCR    = getWidth() - kToggleLegendCollisionPadPx;
+        // Row 1: RVS + BNF
+        const int rvsCR    = backNForthButton.getX() - kToggleLegendCollisionPadPx;
+        const int bnfCR    = getWidth() - kToggleLegendCollisionPadPx;
         // Row 2: AUTO + TRIGGER
         const int autoCR   = triggerButton.getX() - kToggleLegendCollisionPadPx;
         const int trgCR    = getWidth() - kToggleLegendCollisionPadPx;
@@ -4721,6 +4736,7 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
         const int midiCR   = getWidth() - kToggleLegendCollisionPadPx;
 
         const juce::String rvsLabel    = chooseToggleLabel (reverseButton, rvsCR,    "REVERSE",  "RVS");
+        const juce::String bnfLabel    = chooseToggleLabel (backNForthButton, bnfCR, "BACK N FORTH", "BNF");
         const juce::String autoLabel   = chooseToggleLabel (autoButton,    autoCR,   "AUTO",     "AUT");
         const juce::String trgLabel    = chooseToggleLabel (triggerButton,  trgCR,   "TRIGGER",  "TRG");
         const juce::String syncLabel   = chooseToggleLabel (syncButton,    syncCR,   "SYNC",     "SYN");
@@ -4741,8 +4757,9 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
             g.drawText (labelText, drawArea.getX(), drawArea.getY(), drawArea.getWidth(), drawArea.getHeight(), juce::Justification::left, true);
         };
 
-        // Row 1: RVS
+        // Row 1: RVS + BNF
         drawToggleLegend (getReverseLabelArea(), rvsLabel,    rvsCR);
+        drawToggleLegend (getBackNForthLabelArea(), bnfLabel, bnfCR);
 
         // Row 2: AUTO + TRIGGER
         drawToggleLegend (getAutoLabelArea(),    autoLabel,   autoCR);
@@ -4913,6 +4930,7 @@ void GRATRAudioProcessorEditor::resized()
         chaosDelayDisplay.setVisible (true);
 
         reverseButton.setVisible (false);
+        backNForthButton.setVisible (false);
         autoButton.setVisible (false);
         triggerButton.setVisible (false);
         syncButton.setVisible (false);
@@ -4981,6 +4999,7 @@ void GRATRAudioProcessorEditor::resized()
         filterPosCombo.setVisible (false);
 
         reverseButton.setVisible (true);
+        backNForthButton.setVisible (true);
         autoButton.setVisible (true);
         triggerButton.setVisible (true);
         syncButton.setVisible (true);
@@ -4989,7 +5008,7 @@ void GRATRAudioProcessorEditor::resized()
     }
 
     // Button area: 3x2 grid
-    // Row 1: RVS (left)
+    // Row 1: RVS (left) + BNF (right)
     // Row 2: AUTO (left) + TRIGGER (right)
     // Row 3: SYNC (left) + MIDI (right)
     const int buttonAreaX = horizontalLayout.leftX;
@@ -5008,6 +5027,7 @@ void GRATRAudioProcessorEditor::resized()
     const int btnRow3Y = verticalLayout.btnRow3Y;
 
     reverseButton.setBounds (leftBlockX,  btnRow1Y, toggleHitW, verticalLayout.box);
+    backNForthButton.setBounds (rightBlockX, btnRow1Y, toggleHitW, verticalLayout.box);
     autoButton.setBounds    (leftBlockX,  btnRow2Y, toggleHitW, verticalLayout.box);
     triggerButton.setBounds (rightBlockX, btnRow2Y, toggleHitW, verticalLayout.box);
     syncButton.setBounds    (leftBlockX,  btnRow3Y, toggleHitW, verticalLayout.box);

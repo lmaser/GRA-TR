@@ -4,7 +4,6 @@
 #include <array>
 #include <atomic>
 #include <vector>
-#include "PerfTrace.h"
 
 class GRATRAudioProcessor : public juce::AudioProcessor
 {
@@ -35,6 +34,7 @@ public:
 	static constexpr const char* kParamAuto       = "auto_grain";
 	static constexpr const char* kParamTrigger    = "trigger";
 	static constexpr const char* kParamReverse    = "reverse";
+	static constexpr const char* kParamBackNForth = "bnf";
 
 	// Filter parameter IDs
 	static constexpr const char* kParamFilterHpFreq  = "filter_hp_freq";
@@ -110,7 +110,7 @@ static constexpr float kFormantMax     =  12.0f;
 
 	static constexpr float kSmoothMin     = 0.0f;
 	static constexpr float kSmoothMax     = 100.0f;
-	static constexpr float kSmoothDefault = 0.0f;
+	static constexpr float kSmoothDefault = 25.0f;
 
 	static constexpr float kInputMin     = -100.0f;
 	static constexpr float kInputMax     =  0.0f;
@@ -225,8 +225,6 @@ static constexpr float kFormantMax     =  12.0f;
 	struct WetFilterBiquadCoeffs { float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f, a1 = 0.0f, a2 = 0.0f; };
 	struct WetFilterBiquadState  { float z1 = 0.0f, z2 = 0.0f; };
 
-	PerfTrace perfTrace;
-
 private:
 	struct UiStateKeys
 	{
@@ -257,6 +255,7 @@ private:
 		float readPos          = 0.0f;    // fractional read position within grain
 		float fadeGain         = 0.0f;    // crossfade envelope (0->1 fade-in, 1->0 fade-out)
 		float pitchRatio       = 1.0f;    // locked pitch ratio at launch time
+		float smoothFraction   = 0.02f;   // locked taper/fade amount at launch time
 		bool  active           = false;
 		bool  reverse          = false;   // play this grain backwards
 	};
@@ -269,8 +268,33 @@ private:
 	float targetGrainLen_     = 0.0f;     // current target grain length in samples
 	float smoothedGrainLen_   = 0.0f;     // EMA-smoothed grain length for MIDI glide
 	float grainLenGlideStep_  = 1.0f;     // EMA step (1-coeff) for grain length smoothing
+	float lastEffectiveGrainLenForTransition_ = 0.0f;
+	int   grainSizeTransitionSamplesRemaining_ = 0;
+	bool  grainSizeTransitionActive_ = false;
 	bool  prevTriggerState_   = false;    // edge-detect for TRIGGER toggle
 	bool  lastAutoEnabled_    = false;
+	bool  backNForthNextReverse_ = false;
+	bool  lastBackNForthEnabled_ = false;
+	bool  lastBackNForthSeedReverse_ = false;
+
+	struct HostTransportMonitor
+	{
+		juce::int64 lastTimeInSamples = 0;
+		double lastPpqPosition = 0.0;
+		int lastBlockSamples = 0;
+		bool hasLastTimeInSamples = false;
+		bool hasLastPpqPosition = false;
+		bool wasPlaying = false;
+		bool isPlaying = false;
+		bool playStarted = false;
+		bool sampleDiscontinuity = false;
+		bool ppqDiscontinuity = false;
+		bool deterministicResetCandidate = false;
+
+		void reset() noexcept { *this = {}; }
+	};
+
+	HostTransportMonitor hostTransport_;
 
 	// Pitch state --------------------------------------------------
 	float currentPitchRatio_  = 1.0f;     // 2^(semitones/12) playback rate
@@ -439,6 +463,7 @@ private:
 	std::atomic<float>* autoParam     = nullptr;
 	std::atomic<float>* triggerParam  = nullptr;
 	std::atomic<float>* reverseParam  = nullptr;
+	std::atomic<float>* backNForthParam = nullptr;
 
 	std::atomic<float>* filterHpFreqParam  = nullptr;
 	std::atomic<float>* filterLpFreqParam  = nullptr;
@@ -710,6 +735,9 @@ private:
 	void launchNewGrain (int ch, float grainLenSamples, bool reverseGrain);
 	float readGrainInterpolated (const GrainVoice& v, int ch) const;
 	float grainEnvelope (const GrainVoice& v) const;
+	void resetGranularSchedulersForDeterministicStart (bool reverseEnabled) noexcept;
+	void updateHostTransportMonitor (const juce::Optional<juce::AudioPlayHead::PositionInfo>& positionInfo,
+	                                 int numSamples) noexcept;
 
 	JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GRATRAudioProcessor)
 };

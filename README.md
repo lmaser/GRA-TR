@@ -11,14 +11,14 @@ GRA-TR treats granular synthesis as a real-time performance tool. By splitting i
 
 The trigger system offers three modes: AUTO continuously relaunches grains at the rate set by TIME, TRIGGER freezes the buffer and loops whatever was captured (creating infinite sustain from any source), and MIDI overrides grain length to match incoming note pitch - turning the granular engine into a resonator that plays melodies.
 
-Formant control scales the capture window independently from read rate, shifting the spectral center without changing pitch. SMOOTH controls the taper and crossfade depth of each grain in both forward and reverse playback. Combined with reverse mode and per-channel stereo processing, GRA-TR can produce everything from subtle chorusing to alien granular pads.
+Formant control scales the capture window independently from read rate, shifting the spectral center without changing pitch. SMOOTH controls the taper and crossfade depth of each grain in both forward and reverse playback. Reverse and Back N Forth modes can play grains backward or alternate between backward and forward loops. Combined with per-channel stereo processing, GRA-TR can produce everything from subtle chorusing to alien granular pads.
 
 ## Interface
 
 GRA-TR uses a text-based UI with horizontal bar sliders. Core controls stay on the main panel, and the IO section toggles between the main view and the extended IO/routing view without opening separate pages or hidden menus.
 
 - **Bar sliders**: Click and drag horizontally. Right-click for numeric entry (except STYLE, which is slider-only).
-- **Toggle buttons**: SYNC, MIDI, AUTO, TRG (trigger), RVS (reverse). Click to enable/disable.
+- **Toggle buttons**: SYNC, MIDI, AUTO, TRG (trigger), RVS (reverse), BNF (Back N Forth). Click to enable/disable.
 - **Sub-labels**: Click the text next to MIDI to open the MIDI channel prompt.
 - **Collapsible INPUT/OUTPUT/MIX section**: Click the toggle bar (triangle) at the top of the slider area to swap between main parameters and the extended IO/routing controls: INPUT, OUTPUT, TILT, FILTER, PAN, MIX, LIMIT, MODE IN/OUT, SUM BUS, INV POL, INV STR, MIX MODE, and FILTER POS. The toggle bar stays fixed in place; only the arrow direction changes. State persists across sessions and preset changes.
 - **Filter bar**: Visible in the INPUT/OUTPUT/MIX section. Click to open the HP/LP filter configuration prompt with frequency, slope, and enable/disable controls for each filter.
@@ -72,7 +72,9 @@ Formant and pitch are independent: pitch changes speed, formant changes spectral
 Controls the taper and crossfade depth of each grain.
 Lower values keep entries and exits tighter and more immediate. Higher values lengthen the taper, soften transitions, and increase overlap between grains.
 
-SMOOTH applies to both forward and reverse playback. It does not change pitch or formant ratio directly - it changes how softly each grain fades in and out.
+Default: 25%.
+
+SMOOTH applies to both forward and reverse playback. It is locked per grain at launch time, so changing SMOOTH does not reshape grains that are already playing. It does not change pitch or formant ratio directly - it changes how softly each grain fades in and out.
 
 ### STYLE
 
@@ -179,6 +181,8 @@ Example: A4 (440 Hz) -> 2.27 ms.
 
 Enables automatic grain triggering. When active, grains are continuously relaunched at the rate determined by TIME, MIDI, or SYNC.
 
+When SYNC is active and the host provides musical position, AUTO aligns its scheduler to DAW transport/PPQ so loop replay stays deterministic.
+
 ### TRG (Trigger)
 
 Manual trigger mode. When enabled, the grain buffer is frozen - no new audio is written - and grains loop the captured content indefinitely. This creates a freeze/sustain effect from any audio source.
@@ -186,6 +190,12 @@ Manual trigger mode. When enabled, the grain buffer is frozen - no new audio is 
 ### RVS (Reverse)
 
 Reverse grain playback. When enabled, each grain is read backward, producing reversed texture output. The buffer capture direction remains forward - only the grain readout is reversed.
+
+### BNF (Back N Forth)
+
+Back N Forth playback. When enabled, grain direction alternates between reverse and forward on each launch, creating a back-and-forth loop motion.
+
+RVS controls the starting direction: with RVS off, BNF starts forward then reverses; with RVS on, BNF starts reverse then returns forward. AUTO, TRG, and internal relaunches all consume the same deterministic direction sequence.
 
 ### CHAOS
 
@@ -236,15 +246,17 @@ Modes:
 - **Buffer**: Power-of-2 circular buffer with bitwise AND wrapping. Frozen (stops writing) during TRG mode.
 - **Interpolation**: 4-point Hermite cubic on all grain reads.
 - **Grain voices**: Dual voice per channel (A = primary fade-in, B = crossfade-out) for click-free transitions.
-- **Envelope**: Precomputed 129-point Tukey (raised-cosine) lookup table with linear interpolation. No per-sample trigonometry. SMOOTH controls how much of each grain is used as taper.
+- **Envelope**: Precomputed 129-point Tukey (raised-cosine) lookup table with linear interpolation. No per-sample trigonometry. SMOOTH controls how much of each grain is used as taper and is locked per grain at launch time.
 - **Pitch**: Read rate = `2^(semitones/12)`. Grains advance by pitch ratio each sample.
 - **Formant**: Capture length = `effectiveGrainLen / 2^(formantSemitones/12)`. Scales capture window independently from pitch.
-- **Reverse**: Read position always advances forward; reverse mapping (`grainLen - readPos`) is applied in the read function.
-- **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, pitch ratio, formant ratio, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide.
+- **Reverse**: Read position always advances forward; reverse mapping (`grainLen - 1 - readPos`) is applied in the read function so reverse playback starts on the last valid sample inside the captured grain.
+- **Back N Forth**: Direction alternates deterministically per grain launch. RVS seeds the initial direction.
+- **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, pitch ratio, formant ratio, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide. Large TIME/MOD/SYNC size transitions apply a temporary minimum grain taper and slower grain-length glide to avoid discontinuities without changing steady-state playback.
 - **Wet filter**: Biquad HP/LP on the wet signal. Transposed Direct Form II. Coefficients updated once per block.
 - **Tilt EQ**: First-order symmetric shelf at 1 kHz. Coefficients cached with tolerance-based update.
 - **Chaos**: Hermite cubic interpolation between random targets with per-channel quadrature drift LFO. Per-block coefficient precomputation.
 - **Minimum grain**: 4 samples. Minimum taper: 2 samples.
+- **SYNC scheduler**: AUTO can align to host PPQ/BPM on transport start and loop discontinuities for deterministic DAW replay.
 
 ### MIDI Implementation
 - Standard A440 tuning: `frequency = 440 * 2^((note - 69) / 12)`.
@@ -259,3 +271,8 @@ Modes:
 - Added SEND dry/wet controls and smoothing for SEND dry/wet, pan, and limiter threshold to keep fast GUI moves artifact-free.
 - Replaced the old ENV GRA workflow with the main-panel SMOOTH control for grain taper/crossfade shaping in both forward and reverse playback.
 - PITCH and FORMANT now support two-decimal precision in the GUI and numeric prompt.
+- Added BNF (Back N Forth) mode for deterministic forward/reverse alternation.
+- SMOOTH now defaults to 25% for safer click-free startup behavior.
+- Improved deterministic DAW loop/replay behavior for AUTO + SYNC using host transport/PPQ alignment.
+- Grain taper is now locked per launched grain, so SMOOTH automation does not reshape active grains mid-playback.
+- Removed release-facing performance dump/debug instrumentation.
