@@ -1073,12 +1073,20 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (!filterPre_) filterWetSample (wetL, wetR);
 		if (chaosDelayEnabled_) applyChaosDelay (wetL, wetR);
 
-		// Mode Out: M/S encode wet output
+		// Mode Out: MID stays dual-mono, SIDE becomes true stereo (+S / -S)
 		if (numChannels >= 2 && modeOutVal != 0)
 		{
-			const float l = wetL, r = wetR;
-			if (modeOutVal == 1)      { const float mid  = (l + r) * kSqrt2Over2; wetL = wetR = mid; }
-			else /* modeOutVal==2 */   { const float side = (l - r) * kSqrt2Over2; wetL = wetR = side; }
+			const float mono = (wetL + wetR) * 0.5f;
+			if (modeOutVal == 1)
+			{
+				wetL = mono;
+				wetR = mono;
+			}
+			else /* modeOutVal == 2 */
+			{
+				wetL = mono;
+				wetR = -mono;
+			}
 		}
 
 		// Mix dry/wet with Sum Bus routing
