@@ -254,10 +254,14 @@ private:
 		float grainLenSamples  = 0.0f;    // locked grain length in samples
 		float sourceLenSamples = 0.0f;    // locked source window length in samples
 		float backNForthLegLenSamples = 0.0f;
+		float backNForthCellLenSamples = 1.0f;
+		float backNForthInvCellLenSamples = 1.0f;
+		float backNForthSourceCellLenSamples = 0.0f;
 		float readPos          = 0.0f;    // fractional read position within grain
 		float fadeGain         = 0.0f;    // crossfade envelope (0->1 fade-in, 1->0 fade-out)
 		float pitchRatio       = 1.0f;    // locked pitch ratio at launch time
 		float smoothFraction   = 0.02f;   // locked taper/fade amount at launch time
+		int   backNForthCellCount = 1;
 		bool  active           = false;
 		bool  reverse          = false;   // play this grain backwards
 		bool  backNForth       = false;   // ping-pong inside this grain cycle

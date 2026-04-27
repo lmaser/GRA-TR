@@ -660,6 +660,12 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float s
 		? juce::jlimit (1.0f, grainLenSamples,
 		                 backNForthLegLenSamples > 0.0f ? backNForthLegLenSamples : grainLenSamples * 0.5f)
 		: grainLenSamples;
+	v.backNForthCellLenSamples = juce::jmax (1.0f, v.backNForthLegLenSamples * 2.0f);
+	v.backNForthInvCellLenSamples = 1.0f / v.backNForthCellLenSamples;
+	v.backNForthCellCount = backNForthGrain
+		? juce::jmax (1, (int) std::ceil (v.grainLenSamples * v.backNForthInvCellLenSamples))
+		: 1;
+	v.backNForthSourceCellLenSamples = v.sourceLenSamples / (float) v.backNForthCellCount;
 	v.active = true;
 	v.reverse = reverseGrain;
 	v.pitchRatio = smoothedPitchRatio_;
@@ -689,15 +695,15 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 	if (v.backNForth)
 	{
 		const float legLen = juce::jlimit (1.0f, v.grainLenSamples, v.backNForthLegLenSamples);
-		const float cellLen = juce::jmax (1.0f, legLen * 2.0f);
-		const int cellCount = juce::jmax (1, (int) std::ceil (v.grainLenSamples / cellLen));
+		const float cellLen = v.backNForthCellLenSamples;
+		const int cellCount = v.backNForthCellCount;
 		const int cellIndex = juce::jlimit (0, cellCount - 1, (int) std::floor (v.readPos / cellLen));
-		float cellPos = std::fmod (v.readPos, cellLen);
+		float cellPos = v.readPos - (float) cellIndex * cellLen;
 		if (cellPos < 0.0f)
-			cellPos += cellLen;
+			cellPos = 0.0f;
 
 		const float sourceMax = juce::jmax (0.0f, v.sourceLenSamples - 1.0f);
-		const float sourceCellLen = v.sourceLenSamples / (float) cellCount;
+		const float sourceCellLen = v.backNForthSourceCellLenSamples;
 		const float sourceCellStart = juce::jmin (sourceMax, sourceCellLen * (float) cellIndex);
 		const float sourceCellSpan = juce::jmax (0.0f, juce::jmin (sourceMax - sourceCellStart,
 		                                                            sourceCellLen - 1.0f));
