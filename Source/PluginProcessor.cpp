@@ -637,7 +637,8 @@ void GRATRAudioProcessor::tiltWetSample (float& wetL, float& wetR)
 // Grain helpers
 
 void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float sourceLenSamples, bool reverseGrain,
-                                          bool backNForthGrain, int anchorOffsetSamples)
+                                          bool backNForthGrain, int anchorOffsetSamples,
+                                          float backNForthLegLenSamples)
 {
 	const int wrapMask = grainBufferLength - 1;
 
@@ -656,20 +657,15 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float s
 	v.sourceLenSamples = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2), sourceLenSamples);
 	v.backNForth = backNForthGrain;
 	v.backNForthLegLenSamples = backNForthGrain
-		? juce::jlimit (1.0f, grainLenSamples, grainLenSamples * 0.5f)
+		? juce::jlimit (1.0f, grainLenSamples,
+		                 backNForthLegLenSamples > 0.0f ? backNForthLegLenSamples : grainLenSamples * 0.5f)
 		: grainLenSamples;
 	v.active = true;
 	v.reverse = reverseGrain;
 	v.pitchRatio = smoothedPitchRatio_;
 	v.smoothFraction = grainSmoothFraction_;
 
-	const float bnfReadSpanSamples = backNForthGrain
-		? juce::jlimit (1.0f, (float) (grainBufferLength - 2),
-		                 juce::jmax (1.0f, v.backNForthLegLenSamples - 1.0f) * v.pitchRatio + 1.0f)
-		: grainLenSamples;
-	const float anchorLenSamples = backNForthGrain
-		? juce::jmax (v.sourceLenSamples, bnfReadSpanSamples)
-		: grainLenSamples;
+	const float anchorLenSamples = backNForthGrain ? v.sourceLenSamples : grainLenSamples;
 
 	// BNF anchors one leg of source audio; the second leg reads the same window backward.
 	v.anchorWritePos = (grainBufferWritePos - (int) anchorLenSamples + anchorOffsetSamples) & wrapMask;
@@ -693,14 +689,26 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 	if (v.backNForth)
 	{
 		const float legLen = juce::jlimit (1.0f, v.grainLenSamples, v.backNForthLegLenSamples);
-		const bool secondLeg = v.readPos >= legLen;
+		const float cellLen = juce::jmax (1.0f, legLen * 2.0f);
+		const int cellCount = juce::jmax (1, (int) std::ceil (v.grainLenSamples / cellLen));
+		const int cellIndex = juce::jlimit (0, cellCount - 1, (int) std::floor (v.readPos / cellLen));
+		float cellPos = std::fmod (v.readPos, cellLen);
+		if (cellPos < 0.0f)
+			cellPos += cellLen;
+
+		const float sourceMax = juce::jmax (0.0f, v.sourceLenSamples - 1.0f);
+		const float sourceCellLen = v.sourceLenSamples / (float) cellCount;
+		const float sourceCellStart = juce::jmin (sourceMax, sourceCellLen * (float) cellIndex);
+		const float sourceCellSpan = juce::jmax (0.0f, juce::jmin (sourceMax - sourceCellStart,
+		                                                            sourceCellLen - 1.0f));
+		const bool secondLeg = cellPos >= legLen;
 		const bool reverseLeg = secondLeg ? ! v.reverse : v.reverse;
 		const float legPos = juce::jlimit (0.0f, juce::jmax (0.0f, legLen - 1.0f),
-		                                   secondLeg ? (v.readPos - legLen) : v.readPos);
+		                                   secondLeg ? (cellPos - legLen) : cellPos);
 		const float legSpan = juce::jmax (1.0f, legLen - 1.0f);
-		const float readSpan = juce::jlimit (0.0f, (float) (grainBufferLength - 3), legSpan * v.pitchRatio);
+		const float readSpan = juce::jmin (sourceCellSpan, legSpan * v.pitchRatio);
 		const float travel = juce::jlimit (0.0f, readSpan, legPos * v.pitchRatio);
-		readOffset = reverseLeg ? (readSpan - travel) : travel;
+		readOffset = sourceCellStart + (reverseLeg ? (readSpan - travel) : travel);
 	}
 	else
 	{
@@ -899,6 +907,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const double syncedAutoPeriodPpq = (syncEnabled && hostBpm > 0.0 && modFreqMultiplier > 0.0f)
 		? juce::jmax (1.0e-9, ((double) targetGrainMs * 0.001) * (hostBpm / 60.0) / (double) modFreqMultiplier)
 		: 0.0;
+	const float backNForthMaxCellLenSamples = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
+		(float) currentSampleRate * (tempoSyncToMs (10, hostBpm) * 0.001f) / modFreqMultiplier);
 
 	if (lastEffectiveGrainLenForTransition_ >= kMinGrainSamples)
 	{
@@ -1119,12 +1129,12 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		// Capture length from smoothed grain length & formant ratio
 		const float captureLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
 		                                       smoothedGrainLen_ / smoothedFormantRatio_);
-		const float bnfEventLen = smoothedGrainLen_;
-		const float bnfLegLen = bnfEventLen * 0.5f;
-		const float bnfSourceLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
-		                                         bnfLegLen / smoothedFormantRatio_);
-		const float launchGrainLen = backNForthEnabled ? bnfEventLen : captureLen;
-		const float launchSourceLen = backNForthEnabled ? bnfSourceLen : captureLen;
+		const float backNForthEventLen = smoothedGrainLen_;
+		const int backNForthCellCount = juce::jmax (1, (int) std::ceil (backNForthEventLen / backNForthMaxCellLenSamples));
+		const float backNForthCellLen = backNForthEventLen / (float) backNForthCellCount;
+		const float launchBackNForthLegLen = backNForthEnabled ? backNForthCellLen * 0.5f : 0.0f;
+		const float launchGrainLen = backNForthEnabled ? backNForthEventLen : captureLen;
+		const float launchSourceLen = captureLen;
 
 		// Read input
 		float inL = (channelL != nullptr) ? channelL[i] * smoothedInputGain : 0.0f;
@@ -1178,27 +1188,34 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 			if (mode == 0) // MONO: same grain for both channels
 			{
-				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
-				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
+				                0, launchBackNForthLegLen);
+				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
+				                0, launchBackNForthLegLen);
 				// Sync voice anchors for mono
 				voiceA_[1].anchorWritePos = voiceA_[0].anchorWritePos;
 			}
 			else if (mode == 2) // WIDE: temporal decorrelation + M/S widening
 			{
-				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
-				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled, decorrelationOffsetSamples);
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
+				                0, launchBackNForthLegLen);
+				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
+				                decorrelationOffsetSamples, launchBackNForthLegLen);
 			}
 			else if (mode == 3) // DUAL: R at x0.5 pitch (octave down) + temporal offset
 			{
-				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
+				                0, launchBackNForthLegLen);
 				launchNewGrain (1, launchGrainLen, backNForthEnabled ? launchSourceLen * 0.5f : launchSourceLen,
-				                launchReverse, backNForthEnabled, decorrelationOffsetSamples);
+				                launchReverse, backNForthEnabled, decorrelationOffsetSamples, launchBackNForthLegLen);
 				voiceA_[1].pitchRatio = smoothedPitchRatio_ * 0.5f;
 			}
 			else // STEREO (default): independent per-channel
 			{
-				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
-				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled);
+				launchNewGrain (0, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
+				                0, launchBackNForthLegLen);
+				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
+				                0, launchBackNForthLegLen);
 			}
 		}
 
@@ -1237,7 +1254,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 							? launchSourceLen * 0.5f
 							: launchSourceLen;
 						launchNewGrain (ch, launchGrainLen, relaunchSourceLen,
-						                launchReverse, backNForthEnabled, relaunchAnchorOffsetSamples);
+						                launchReverse, backNForthEnabled, relaunchAnchorOffsetSamples,
+						                launchBackNForthLegLen);
 						// DUAL: R channel plays at x0.5 pitch (octave down) + offset anchor
 						if (mode == 3 && ch == 1)
 						{

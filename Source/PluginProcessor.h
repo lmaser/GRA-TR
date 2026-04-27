@@ -733,7 +733,8 @@ private:
 
 	// Grain helpers -----------------------------------------------
 	void launchNewGrain (int ch, float grainLenSamples, float sourceLenSamples, bool reverseGrain,
-	                     bool backNForthGrain = false, int anchorOffsetSamples = 0);
+	                     bool backNForthGrain = false, int anchorOffsetSamples = 0,
+	                     float backNForthLegLenSamples = 0.0f);
 	float readGrainInterpolated (const GrainVoice& v, int ch) const;
 	float grainEnvelope (const GrainVoice& v) const;
 	void resetGranularSchedulersForDeterministicStart (bool reverseEnabled) noexcept;
