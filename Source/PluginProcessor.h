@@ -3,7 +3,12 @@
 #include <JuceHeader.h>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <vector>
+
+#ifndef GRA_TR_BNF_DETERMINISM_DUMP
+#define GRA_TR_BNF_DETERMINISM_DUMP 0
+#endif
 
 class GRATRAudioProcessor : public juce::AudioProcessor
 {
@@ -16,7 +21,7 @@ public:
 	static constexpr const char* kParamTimeSync   = "time_sync";
 	static constexpr const char* kParamMod        = "mod";
 	static constexpr const char* kParamPitch      = "pitch";
-	static constexpr const char* kParamFormant    = "formant";
+	static constexpr const char* kParamScan       = "scan";
 	static constexpr const char* kParamSmooth     = "smooth";
 	static constexpr const char* kParamMode       = "mode";       // 0=MONO 1=STEREO 2=WIDE 3=DUAL
 	static constexpr const char* kParamInput      = "input";
@@ -104,9 +109,9 @@ public:
 	static constexpr float kPitchMax     =  24.0f;
 	static constexpr float kPitchDefault =  0.0f;
 
-static constexpr float kFormantMin     = -12.0f;
-static constexpr float kFormantMax     =  12.0f;
-	static constexpr float kFormantDefault =  0.0f;
+	static constexpr float kScanMin     = -100.0f;
+	static constexpr float kScanMax     =  100.0f;
+	static constexpr float kScanDefault =    0.0f;
 
 	static constexpr float kSmoothMin     = 0.0f;
 	static constexpr float kSmoothMax     = 100.0f;
@@ -276,10 +281,13 @@ private:
 	float smoothedGrainLen_   = 0.0f;     // EMA-smoothed grain length for MIDI glide
 	float grainLenGlideStep_  = 1.0f;     // EMA step (1-coeff) for grain length smoothing
 	float lastEffectiveGrainLenForTransition_ = 0.0f;
+	double lastSyncedAutoPeriodPpq_ = 0.0;
 	int   grainSizeTransitionSamplesRemaining_ = 0;
 	bool  grainSizeTransitionActive_ = false;
 	bool  prevTriggerState_   = false;    // edge-detect for TRIGGER toggle
 	bool  lastAutoEnabled_    = false;
+	bool  syncedAutoDryFillActive_ = false;
+	float syncedAutoDryFillGain_ = 0.0f;
 
 	struct HostTransportMonitor
 	{
@@ -300,16 +308,129 @@ private:
 
 	HostTransportMonitor hostTransport_;
 
+#if GRA_TR_BNF_DETERMINISM_DUMP
+	enum class BnfDumpEvent : int
+	{
+		prepare = 1,
+		release,
+		transportReset,
+		schedulerReset,
+		launchRequest,
+		voiceLaunch,
+		voiceRelaunch
+	};
+
+	enum BnfDumpLaunchReason
+	{
+		kBnfDumpReasonNone = 0,
+		kBnfDumpReasonAutoStart = 1 << 0,
+		kBnfDumpReasonAutoPeriod = 1 << 1,
+		kBnfDumpReasonTriggerEdge = 1 << 2,
+		kBnfDumpReasonVoiceEnd = 1 << 3
+	};
+
+	struct BnfDumpRow
+	{
+		std::uint64_t eventIndex = 0;
+		std::uint64_t blockIndex = 0;
+		std::uint64_t streamSample = 0;
+		std::uint64_t launchSerial = 0;
+		int eventType = 0;
+		int reason = 0;
+		int sampleInBlock = 0;
+		int numSamples = 0;
+		int channel = -1;
+		int mode = 0;
+		int grainBufferWritePos = 0;
+		int anchorWritePos = 0;
+		int anchorOffsetSamples = 0;
+		int cellCount = 0;
+		int syncEnabled = 0;
+		int autoEnabled = 0;
+		int triggerEnabled = 0;
+		int reverseEnabled = 0;
+		int backNForthEnabled = 0;
+		int midiEnabled = 0;
+		int hostPlaying = 0;
+		int hostPlayStarted = 0;
+		int hostSampleDiscontinuity = 0;
+		int hostPpqDiscontinuity = 0;
+		int deterministicResetCandidate = 0;
+		int hasHostSample = 0;
+		int hasHostPpq = 0;
+		juce::int64 hostSample = 0;
+		double hostPpq = 0.0;
+		double hostBpm = 0.0;
+		float autoPhaseCounter = 0.0f;
+		float targetGrainLen = 0.0f;
+		float smoothedGrainLen = 0.0f;
+		float targetGrainMs = 0.0f;
+		float modValue = 0.0f;
+		float pitchRatio = 0.0f;
+		float scanRatio = 0.0f;
+		float smoothFraction = 0.0f;
+		float captureLen = 0.0f;
+		float bnfEventLen = 0.0f;
+		float bnfMaxCellLen = 0.0f;
+		float bnfCellLen = 0.0f;
+		float launchGrainLen = 0.0f;
+		float launchSourceLen = 0.0f;
+		float launchLegLen = 0.0f;
+		float voiceGrainLen = 0.0f;
+		float voiceSourceLen = 0.0f;
+		float voiceLegLen = 0.0f;
+		float voiceCellLen = 0.0f;
+		float voiceSourceCellLen = 0.0f;
+		float voiceReadPos = 0.0f;
+		float voiceFadeGain = 0.0f;
+	};
+
+	static constexpr int kBnfDumpCapacity = 65536;
+	std::array<BnfDumpRow, kBnfDumpCapacity> bnfDumpRows_ {};
+	std::uint64_t bnfDumpWriteCount_ = 0;
+	std::uint64_t bnfDumpBlockIndex_ = 0;
+	std::uint64_t bnfDumpProcessedSamples_ = 0;
+	std::uint64_t bnfDumpLaunchSerial_ = 0;
+	int bnfDumpCurrentSampleInBlock_ = 0;
+	int bnfDumpCurrentNumSamples_ = 0;
+	int bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
+	int bnfDumpCurrentAnchorOffsetSamples_ = 0;
+	bool bnfDumpSyncEnabled_ = false;
+	bool bnfDumpAutoEnabled_ = false;
+	bool bnfDumpTriggerEnabled_ = false;
+	bool bnfDumpReverseEnabled_ = false;
+	bool bnfDumpBackNForthEnabled_ = false;
+	bool bnfDumpMidiEnabled_ = false;
+	bool bnfDumpHasHostSample_ = false;
+	bool bnfDumpHasHostPpq_ = false;
+	juce::int64 bnfDumpHostSampleAtBlockStart_ = 0;
+	double bnfDumpPpqAtBlockStart_ = 0.0;
+	double bnfDumpHostBpm_ = 0.0;
+	float bnfDumpTargetGrainMs_ = 0.0f;
+	float bnfDumpModValue_ = 0.0f;
+	float bnfDumpCaptureLen_ = 0.0f;
+	float bnfDumpBackNForthEventLen_ = 0.0f;
+	float bnfDumpBackNForthMaxCellLen_ = 0.0f;
+	float bnfDumpBackNForthCellLen_ = 0.0f;
+	float bnfDumpLaunchGrainLen_ = 0.0f;
+	float bnfDumpLaunchSourceLen_ = 0.0f;
+	float bnfDumpLaunchLegLen_ = 0.0f;
+	int bnfDumpMode_ = 0;
+
+	void logBnfDeterminismEvent (BnfDumpEvent eventType, int channel = -1,
+	                             const GrainVoice* voice = nullptr) noexcept;
+	void flushBnfDeterminismDump();
+	static const char* getBnfDumpEventName (BnfDumpEvent eventType) noexcept;
+#endif
+
 	// Pitch state --------------------------------------------------
 	float currentPitchRatio_  = 1.0f;     // 2^(semitones/12) playback rate
 	float smoothedPitchRatio_ = 1.0f;     // EMA-smoothed pitch ratio
 
-	// Formant shift (grain-size-based spectral envelope control) ---
-	// Formant in semitones: controls grain capture length.
-	// Shorter capture (+st) = brighter, longer capture (-st) = warmer.
-	// Read rate stays at pitchRatio, so pitch is independent.
-	float currentFormantRatio_ = 1.0f;  // 2^(formantSemitones/12)
-	float smoothedFormantRatio_ = 1.0f; // EMA-smoothed formant ratio
+	// SCAN controls the captured source span inside each grain.
+	// +100% halves the capture span, -100% doubles it; pitch remains separate.
+	float currentScanRatio_ = 1.0f;  // 2^(scanPercent/100)
+	float smoothedScanRatio_ = 1.0f; // EMA-smoothed scan ratio
 
 	// Per-sample EMA-smoothed parameters ---------------------------
 	float smoothedInputGain   = 1.0f;
@@ -445,7 +566,7 @@ private:
 	std::atomic<float>* timeSyncParam = nullptr;
 	std::atomic<float>* modParam      = nullptr;
 	std::atomic<float>* pitchParam    = nullptr;
-	std::atomic<float>* formantParam  = nullptr;
+	std::atomic<float>* scanParam     = nullptr;
 	std::atomic<float>* smoothParam   = nullptr;
 	std::atomic<float>* modeParam     = nullptr;
 	std::atomic<float>* inputParam    = nullptr;

@@ -28,6 +28,7 @@ namespace
 	constexpr float kGrainSizeTransitionGlideTauSeconds = 0.025f;
 	constexpr float kGrainSizeTransitionSmoothFloor = 0.12f;
 	constexpr double kHostSyncPhaseBoundaryToleranceSamples = 2.0;
+	constexpr double kSyncedAutoPeriodReanchorMinRatio = 0.01;
 
 	inline float loadAtomicOrDefault (std::atomic<float>* p, float def) noexcept
 	{
@@ -155,7 +156,7 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	timeSyncParam = apvts.getRawParameterValue (kParamTimeSync);
 	modParam      = apvts.getRawParameterValue (kParamMod);
 	pitchParam    = apvts.getRawParameterValue (kParamPitch);
-	formantParam  = apvts.getRawParameterValue (kParamFormant);
+	scanParam     = apvts.getRawParameterValue (kParamScan);
 	smoothParam   = apvts.getRawParameterValue (kParamSmooth);
 	modeParam     = apvts.getRawParameterValue (kParamMode);
 	inputParam    = apvts.getRawParameterValue (kParamInput);
@@ -207,7 +208,191 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	uiEditorHeight.store (h, std::memory_order_relaxed);
 }
 
-GRATRAudioProcessor::~GRATRAudioProcessor() {}
+GRATRAudioProcessor::~GRATRAudioProcessor()
+{
+#if GRA_TR_BNF_DETERMINISM_DUMP
+	flushBnfDeterminismDump();
+#endif
+}
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+const char* GRATRAudioProcessor::getBnfDumpEventName (BnfDumpEvent eventType) noexcept
+{
+	switch (eventType)
+	{
+		case BnfDumpEvent::prepare:        return "prepare";
+		case BnfDumpEvent::release:        return "release";
+		case BnfDumpEvent::transportReset: return "transport_reset";
+		case BnfDumpEvent::schedulerReset: return "scheduler_reset";
+		case BnfDumpEvent::launchRequest:  return "launch_request";
+		case BnfDumpEvent::voiceLaunch:    return "voice_launch";
+		case BnfDumpEvent::voiceRelaunch:  return "voice_relaunch";
+		default:                           return "unknown";
+	}
+}
+
+void GRATRAudioProcessor::logBnfDeterminismEvent (BnfDumpEvent eventType, int channel,
+                                                  const GrainVoice* voice) noexcept
+{
+	const auto writeIndex = bnfDumpWriteCount_ % (std::uint64_t) kBnfDumpCapacity;
+	auto& row = bnfDumpRows_[(size_t) writeIndex];
+	row = {};
+
+	row.eventIndex = bnfDumpWriteCount_++;
+	row.blockIndex = bnfDumpBlockIndex_;
+	row.streamSample = bnfDumpProcessedSamples_ + (std::uint64_t) juce::jmax (0, bnfDumpCurrentSampleInBlock_);
+	row.launchSerial = bnfDumpLaunchSerial_;
+	row.eventType = (int) eventType;
+	row.reason = bnfDumpCurrentLaunchReason_;
+	row.sampleInBlock = bnfDumpCurrentSampleInBlock_;
+	row.numSamples = bnfDumpCurrentNumSamples_;
+	row.channel = channel;
+	row.mode = bnfDumpMode_;
+	row.grainBufferWritePos = grainBufferWritePos;
+	row.anchorOffsetSamples = bnfDumpCurrentAnchorOffsetSamples_;
+	row.syncEnabled = bnfDumpSyncEnabled_ ? 1 : 0;
+	row.autoEnabled = bnfDumpAutoEnabled_ ? 1 : 0;
+	row.triggerEnabled = bnfDumpTriggerEnabled_ ? 1 : 0;
+	row.reverseEnabled = bnfDumpReverseEnabled_ ? 1 : 0;
+	row.backNForthEnabled = bnfDumpBackNForthEnabled_ ? 1 : 0;
+	row.midiEnabled = bnfDumpMidiEnabled_ ? 1 : 0;
+	row.hostPlaying = hostTransport_.isPlaying ? 1 : 0;
+	row.hostPlayStarted = hostTransport_.playStarted ? 1 : 0;
+	row.hostSampleDiscontinuity = hostTransport_.sampleDiscontinuity ? 1 : 0;
+	row.hostPpqDiscontinuity = hostTransport_.ppqDiscontinuity ? 1 : 0;
+	row.deterministicResetCandidate = hostTransport_.deterministicResetCandidate ? 1 : 0;
+	row.hasHostSample = bnfDumpHasHostSample_ ? 1 : 0;
+	row.hasHostPpq = bnfDumpHasHostPpq_ ? 1 : 0;
+	row.hostSample = bnfDumpHasHostSample_
+		? bnfDumpHostSampleAtBlockStart_ + (juce::int64) juce::jmax (0, bnfDumpCurrentSampleInBlock_)
+		: 0;
+	row.hostPpq = bnfDumpHasHostPpq_
+		? bnfDumpPpqAtBlockStart_ + ((double) juce::jmax (0, bnfDumpCurrentSampleInBlock_) / currentSampleRate) * (bnfDumpHostBpm_ / 60.0)
+		: 0.0;
+	row.hostBpm = bnfDumpHostBpm_;
+	row.autoPhaseCounter = autoPhaseCounter_;
+	row.targetGrainLen = targetGrainLen_;
+	row.smoothedGrainLen = smoothedGrainLen_;
+	row.targetGrainMs = bnfDumpTargetGrainMs_;
+	row.modValue = bnfDumpModValue_;
+	row.pitchRatio = smoothedPitchRatio_;
+	row.scanRatio = smoothedScanRatio_;
+	row.smoothFraction = grainSmoothFraction_;
+	row.captureLen = bnfDumpCaptureLen_;
+	row.bnfEventLen = bnfDumpBackNForthEventLen_;
+	row.bnfMaxCellLen = bnfDumpBackNForthMaxCellLen_;
+	row.bnfCellLen = bnfDumpBackNForthCellLen_;
+	row.launchGrainLen = bnfDumpLaunchGrainLen_;
+	row.launchSourceLen = bnfDumpLaunchSourceLen_;
+	row.launchLegLen = bnfDumpLaunchLegLen_;
+
+	if (voice != nullptr)
+	{
+		row.anchorWritePos = voice->anchorWritePos;
+		row.cellCount = voice->backNForthCellCount;
+		row.voiceGrainLen = voice->grainLenSamples;
+		row.voiceSourceLen = voice->sourceLenSamples;
+		row.voiceLegLen = voice->backNForthLegLenSamples;
+		row.voiceCellLen = voice->backNForthCellLenSamples;
+		row.voiceSourceCellLen = voice->backNForthSourceCellLenSamples;
+		row.voiceReadPos = voice->readPos;
+		row.voiceFadeGain = voice->fadeGain;
+	}
+}
+
+void GRATRAudioProcessor::flushBnfDeterminismDump()
+{
+	if (bnfDumpWriteCount_ == 0)
+		return;
+
+	auto dumpFile = juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
+		.getChildFile ("GRA_TR_bnf_determinism_dump.csv");
+
+	auto stream = dumpFile.createOutputStream();
+	if (stream == nullptr)
+		return;
+
+	stream->writeText (
+		"event_index,event_name,event_type,reason,block_index,sample_in_block,num_samples,stream_sample,"
+		"host_sample,host_ppq,host_bpm,has_host_sample,has_host_ppq,host_playing,host_play_started,"
+		"host_sample_discontinuity,host_ppq_discontinuity,deterministic_reset_candidate,launch_serial,"
+		"channel,mode,sync,auto,trigger,rvs,bnf,midi,grain_buffer_write_pos,anchor_write_pos,"
+		"anchor_offset_samples,auto_phase_counter,target_grain_len,smoothed_grain_len,target_grain_ms,"
+		"mod_value,pitch_ratio,scan_ratio,smooth_fraction,capture_len,bnf_event_len,bnf_max_cell_len,"
+		"bnf_cell_len,launch_grain_len,launch_source_len,launch_leg_len,cell_count,voice_grain_len,"
+		"voice_source_len,voice_leg_len,voice_cell_len,voice_source_cell_len,voice_read_pos,voice_fade_gain\n",
+		false, false, nullptr);
+
+	const auto total = bnfDumpWriteCount_;
+	const auto rowsToWrite = juce::jmin<std::uint64_t> (total, (std::uint64_t) kBnfDumpCapacity);
+	const auto first = total - rowsToWrite;
+
+	for (std::uint64_t n = 0; n < rowsToWrite; ++n)
+	{
+		const auto& row = bnfDumpRows_[(size_t) ((first + n) % (std::uint64_t) kBnfDumpCapacity)];
+		const auto eventType = (BnfDumpEvent) row.eventType;
+
+		juce::String line;
+		line << (juce::int64) row.eventIndex << ","
+		     << getBnfDumpEventName (eventType) << ","
+		     << row.eventType << ","
+		     << row.reason << ","
+		     << (juce::int64) row.blockIndex << ","
+		     << row.sampleInBlock << ","
+		     << row.numSamples << ","
+		     << (juce::int64) row.streamSample << ","
+		     << row.hostSample << ","
+		     << juce::String (row.hostPpq, 12) << ","
+		     << juce::String (row.hostBpm, 6) << ","
+		     << row.hasHostSample << ","
+		     << row.hasHostPpq << ","
+		     << row.hostPlaying << ","
+		     << row.hostPlayStarted << ","
+		     << row.hostSampleDiscontinuity << ","
+		     << row.hostPpqDiscontinuity << ","
+		     << row.deterministicResetCandidate << ","
+		     << (juce::int64) row.launchSerial << ","
+		     << row.channel << ","
+		     << row.mode << ","
+		     << row.syncEnabled << ","
+		     << row.autoEnabled << ","
+		     << row.triggerEnabled << ","
+		     << row.reverseEnabled << ","
+		     << row.backNForthEnabled << ","
+		     << row.midiEnabled << ","
+		     << row.grainBufferWritePos << ","
+		     << row.anchorWritePos << ","
+		     << row.anchorOffsetSamples << ","
+		     << juce::String (row.autoPhaseCounter, 6) << ","
+		     << juce::String (row.targetGrainLen, 6) << ","
+		     << juce::String (row.smoothedGrainLen, 6) << ","
+		     << juce::String (row.targetGrainMs, 6) << ","
+		     << juce::String (row.modValue, 6) << ","
+		     << juce::String (row.pitchRatio, 9) << ","
+		     << juce::String (row.scanRatio, 9) << ","
+		     << juce::String (row.smoothFraction, 9) << ","
+		     << juce::String (row.captureLen, 6) << ","
+		     << juce::String (row.bnfEventLen, 6) << ","
+		     << juce::String (row.bnfMaxCellLen, 6) << ","
+		     << juce::String (row.bnfCellLen, 6) << ","
+		     << juce::String (row.launchGrainLen, 6) << ","
+		     << juce::String (row.launchSourceLen, 6) << ","
+		     << juce::String (row.launchLegLen, 6) << ","
+		     << row.cellCount << ","
+		     << juce::String (row.voiceGrainLen, 6) << ","
+		     << juce::String (row.voiceSourceLen, 6) << ","
+		     << juce::String (row.voiceLegLen, 6) << ","
+		     << juce::String (row.voiceCellLen, 6) << ","
+		     << juce::String (row.voiceSourceCellLen, 6) << ","
+		     << juce::String (row.voiceReadPos, 6) << ","
+		     << juce::String (row.voiceFadeGain, 9) << "\n";
+
+		stream->writeText (line, false, false, nullptr);
+	}
+
+	bnfDumpWriteCount_ = 0;
+}
+#endif
 
 //==============================================================================
 const juce::String GRATRAudioProcessor::getName() const   { return JucePlugin_Name; }
@@ -278,16 +463,31 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	smoothedGrainLen_ = 0.0f;
 	grainLenGlideStep_ = 1.0f;
 	lastEffectiveGrainLenForTransition_ = 0.0f;
+	lastSyncedAutoPeriodPpq_ = 0.0;
 	grainSizeTransitionSamplesRemaining_ = 0;
 	grainSizeTransitionActive_ = false;
 	prevTriggerState_ = false;
 	lastAutoEnabled_  = false;
+	syncedAutoDryFillActive_ = false;
+	syncedAutoDryFillGain_ = 0.0f;
 	hostTransport_.reset();
 
+#if GRA_TR_BNF_DETERMINISM_DUMP
+	bnfDumpWriteCount_ = 0;
+	bnfDumpBlockIndex_ = 0;
+	bnfDumpProcessedSamples_ = 0;
+	bnfDumpLaunchSerial_ = 0;
+	bnfDumpCurrentSampleInBlock_ = 0;
+	bnfDumpCurrentNumSamples_ = 0;
+	bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
+	bnfDumpCurrentAnchorOffsetSamples_ = 0;
+	logBnfDeterminismEvent (BnfDumpEvent::prepare);
+#endif
+
 	currentPitchRatio_ = 1.0f;
-	currentFormantRatio_ = 1.0f;
+	currentScanRatio_ = 1.0f;
 	smoothedPitchRatio_ = 1.0f;
-	smoothedFormantRatio_ = 1.0f;
+	smoothedScanRatio_ = 1.0f;
 
 	smoothedInputGain = fastDecibelsToGain (loadAtomicOrDefault (inputParam, kInputDefault));
 	smoothedOutputGain = fastDecibelsToGain (loadAtomicOrDefault (outputParam, kOutputDefault));
@@ -355,6 +555,11 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 void GRATRAudioProcessor::releaseResources()
 {
+#if GRA_TR_BNF_DETERMINISM_DUMP
+	logBnfDeterminismEvent (BnfDumpEvent::release);
+	flushBnfDeterminismDump();
+#endif
+
 	grainBuffer.setSize (0, 0);
 	grainBufferLength   = 0;
 	grainBufferWritePos = 0;
@@ -448,6 +653,7 @@ void GRATRAudioProcessor::resetGranularSchedulersForDeterministicStart (bool rev
 {
 	juce::ignoreUnused (reverseEnabled);
 	autoPhaseCounter_ = 0.0f;
+	lastSyncedAutoPeriodPpq_ = 0.0;
 	prevTriggerState_ = false;
 	lastAutoEnabled_ = false;
 }
@@ -621,16 +827,11 @@ void GRATRAudioProcessor::tiltWetSample (float& wetL, float& wetR)
 }
 
 //==============================================================================
-// Formant control (grain-size-based spectral character shift)
+// SCAN control (grain source-span scaling)
 //
-// In granular synthesis, shorter grains contain fewer pitch periods, causing the
-// spectral centroid to shift upward (brighter).  Longer grains capture more
-// periods, producing a warmer sound.  The formant parameter scales the grain
-// capture length by 1/formantRatio without changing the read rate or the
-// auto-retrigger period, so pitch remains controlled solely by pitchRatio while
-// the spectral character shifts.
-//
-// This is the approach used by hardware granular synths (e.g. Tasty Chips GR-1).
+// SCAN changes how much source material each grain captures, without changing
+// the external event period. At long TIME values this can feel like moving
+// through the internal loop/fraseo rather than like a static tone control.
 //
 
 //==============================================================================
@@ -679,6 +880,14 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float s
 	// Read position always starts at 0; reverse mapping is handled in readGrainInterpolated
 	v.readPos = 0.0f;
 	v.fadeGain = 0.0f;  // will fade in
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+	bnfDumpCurrentAnchorOffsetSamples_ = anchorOffsetSamples;
+	logBnfDeterminismEvent ((bnfDumpCurrentLaunchReason_ & kBnfDumpReasonVoiceEnd) != 0
+		? BnfDumpEvent::voiceRelaunch
+		: BnfDumpEvent::voiceLaunch,
+		ch, &v);
+#endif
 }
 
 float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) const
@@ -816,6 +1025,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	if (grainBufferLength == 0 || currentSampleRate <= 0.0)
 	{
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		bnfDumpProcessedSamples_ += (std::uint64_t) juce::jmax (0, numSamples);
+		++bnfDumpBlockIndex_;
+#endif
 		return;
 	}
 
@@ -838,7 +1051,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const float timeMsValue  = loadAtomicOrDefault (timeMsParam, kTimeMsDefault);
 	const float modValue     = loadAtomicOrDefault (modParam, kModDefault);
 	const float pitchSemi    = loadAtomicOrDefault (pitchParam, kPitchDefault);
-	const float formantSemi  = loadAtomicOrDefault (formantParam, kFormantDefault);
+	const float scanPercent  = loadAtomicOrDefault (scanParam, kScanDefault);
 	const float inputGainDb  = loadAtomicOrDefault (inputParam, kInputDefault);
 	const float outputGainDb = loadAtomicOrDefault (outputParam, kOutputDefault);
 	const float mixValue     = loadAtomicOrDefault (mixParam, kMixDefault);
@@ -870,9 +1083,9 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		? fastDecibelsToGain (loadAtomicOrDefault (limThresholdParam, kLimThresholdDefault))
 		: 1.0f;
 
-	// Pitch ratio & formant ratio (targets - smoothed per-sample below)
+	// Pitch ratio & scan ratio (targets - smoothed per-sample below)
 	currentPitchRatio_   = std::exp2 (pitchSemi / 12.0f);
-	currentFormantRatio_ = std::exp2 (formantSemi / 12.0f);
+	currentScanRatio_    = std::exp2 (scanPercent / 100.0f);
 
 	// MOD frequency multiplier (hyperbolic below centre, linear above - same as ECHO-TR)
 	// 0.0 -> x0.25, 0.5 -> x1.0, 1.0 -> x4.0
@@ -1049,48 +1262,104 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	if (std::abs (smoothedPan        - panTarget) < kSnapEpsilon) smoothedPan = panTarget;
 	if (std::abs (smoothedLimThreshold - limThreshLinTarget) < kSnapEpsilon) smoothedLimThreshold = limThreshLinTarget;
 	if (std::abs (smoothedPitchRatio_   - currentPitchRatio_)   < kSnapEpsilon) smoothedPitchRatio_   = currentPitchRatio_;
-	if (std::abs (smoothedFormantRatio_ - currentFormantRatio_) < kSnapEpsilon) smoothedFormantRatio_ = currentFormantRatio_;
+	if (std::abs (smoothedScanRatio_ - currentScanRatio_) < kSnapEpsilon) smoothedScanRatio_ = currentScanRatio_;
 
 	// Dry passthrough: when neither AUTO nor TRIGGER is active, fade mix to 0
 	// so the dry signal passes through instead of silence.
 	const float effectiveMixTarget = (!autoEnabled && !triggerEnabled) ? 0.0f : mixValue;
 
+#if GRA_TR_BNF_DETERMINISM_DUMP
+	bnfDumpCurrentNumSamples_ = numSamples;
+	bnfDumpCurrentSampleInBlock_ = 0;
+	bnfDumpMode_ = mode;
+	bnfDumpSyncEnabled_ = syncEnabled;
+	bnfDumpAutoEnabled_ = autoEnabled;
+	bnfDumpTriggerEnabled_ = triggerEnabled;
+	bnfDumpReverseEnabled_ = reverseEnabled;
+	bnfDumpBackNForthEnabled_ = backNForthEnabled;
+	bnfDumpMidiEnabled_ = midiEnabled;
+	bnfDumpHostBpm_ = hostBpm;
+	bnfDumpTargetGrainMs_ = targetGrainMs;
+	bnfDumpModValue_ = modValue;
+	bnfDumpBackNForthMaxCellLen_ = backNForthMaxCellLenSamples;
+	bnfDumpHasHostSample_ = hostPosition.hasValue() && hostPosition->getTimeInSamples().hasValue();
+	bnfDumpHasHostPpq_ = hostPosition.hasValue() && hostPosition->getPpqPosition().hasValue();
+	bnfDumpHostSampleAtBlockStart_ = bnfDumpHasHostSample_ ? *hostPosition->getTimeInSamples() : 0;
+	bnfDumpPpqAtBlockStart_ = bnfDumpHasHostPpq_ ? *hostPosition->getPpqPosition() : 0.0;
+#endif
+
 	bool hostSyncedAutoLaunchAtBlockStart = false;
+	const bool canHostAlignSyncedAuto = syncEnabled && autoEnabled && ! triggerEnabled && ! midiNoteActive
+		&& syncedAutoPeriodPpq > 0.0
+		&& hostPosition.hasValue()
+		&& hostPosition->getPpqPosition().hasValue();
+	const bool syncedAutoHadPeriod = lastSyncedAutoPeriodPpq_ > 0.0;
+	const bool syncedAutoPeriodChanged = canHostAlignSyncedAuto
+		&& syncedAutoHadPeriod
+		&& std::abs (syncedAutoPeriodPpq - lastSyncedAutoPeriodPpq_)
+			> juce::jmax (1.0e-9, lastSyncedAutoPeriodPpq_ * kSyncedAutoPeriodReanchorMinRatio);
+	const auto alignSyncedAutoToHost = [&]() -> bool
+	{
+		if (! canHostAlignSyncedAuto)
+			return false;
+
+		double phasePpq = std::fmod (*hostPosition->getPpqPosition(), syncedAutoPeriodPpq);
+		if (phasePpq < 0.0)
+			phasePpq += syncedAutoPeriodPpq;
+
+		const double ppqPerSample = hostBpm / (60.0 * currentSampleRate);
+		const double boundaryTolerancePpq = juce::jmax (1.0e-9,
+		                                                ppqPerSample * kHostSyncPhaseBoundaryToleranceSamples);
+
+		if (phasePpq <= boundaryTolerancePpq)
+		{
+			autoPhaseCounter_ = 0.0f;
+			return true;
+		}
+
+		const float phaseSamples = (float) ((phasePpq / syncedAutoPeriodPpq)
+			* (double) juce::jmax (kMinGrainSamples, smoothedGrainLen_));
+		autoPhaseCounter_ = juce::jlimit (0.0f,
+		                                  juce::jmax (0.0f, smoothedGrainLen_ - 1.0f),
+		                                  phaseSamples);
+		return false;
+	};
+	const auto clearActiveGranularVoices = [&]() noexcept
+	{
+		for (auto& voice : voiceA_)
+			voice = {};
+		for (auto& voice : voiceB_)
+			voice = {};
+	};
 	if (hostTransport_.deterministicResetCandidate)
 	{
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
+		logBnfDeterminismEvent (BnfDumpEvent::transportReset);
+#endif
+
 		resetGranularSchedulersForDeterministicStart (reverseEnabled);
-
-		const bool canAlignSyncedAuto = syncEnabled && autoEnabled && ! midiNoteActive
-			&& syncedAutoPeriodPpq > 0.0
-			&& hostPosition.hasValue()
-			&& hostPosition->getPpqPosition().hasValue();
-
-		if (canAlignSyncedAuto)
+		bool clearedVoicesForSyncedAuto = false;
+		if (autoEnabled && backNForthEnabled && ! triggerEnabled)
 		{
-			double phasePpq = std::fmod (*hostPosition->getPpqPosition(), syncedAutoPeriodPpq);
-			if (phasePpq < 0.0)
-				phasePpq += syncedAutoPeriodPpq;
+			clearActiveGranularVoices();
+			clearedVoicesForSyncedAuto = true;
+		}
 
-			const double ppqPerSample = hostBpm / (60.0 * currentSampleRate);
-			const double boundaryTolerancePpq = juce::jmax (1.0e-9,
-			                                                ppqPerSample * kHostSyncPhaseBoundaryToleranceSamples);
-
-			if (phasePpq <= boundaryTolerancePpq)
-			{
-				autoPhaseCounter_ = 0.0f;
+		if (canHostAlignSyncedAuto)
+		{
+			const bool launchAtBlockStart = alignSyncedAutoToHost();
+			if (launchAtBlockStart)
 				hostSyncedAutoLaunchAtBlockStart = true;
-			}
-			else
-			{
-				const float phaseSamples = (float) ((phasePpq / syncedAutoPeriodPpq)
-					* (double) juce::jmax (kMinGrainSamples, smoothedGrainLen_));
-				autoPhaseCounter_ = juce::jlimit (0.0f,
-				                                  juce::jmax (0.0f, smoothedGrainLen_ - 1.0f),
-				                                  phaseSamples);
-			}
+			if (clearedVoicesForSyncedAuto)
+				syncedAutoDryFillActive_ = ! launchAtBlockStart;
 
 			lastAutoEnabled_ = autoEnabled;
 		}
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		logBnfDeterminismEvent (BnfDumpEvent::schedulerReset);
+#endif
 	}
 
 	// Detect TRIGGER edge ------------------------------------------
@@ -1100,6 +1369,53 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	// Detect AUTO enable edge (launch immediately on enable) ------
 	const bool autoJustEnabled = autoEnabled && !lastAutoEnabled_;
 	lastAutoEnabled_ = autoEnabled;
+	bool suppressImmediateAutoStart = false;
+	if (autoJustEnabled && canHostAlignSyncedAuto)
+	{
+		suppressImmediateAutoStart = true;
+		smoothedGrainLen_ = effectiveGrainLen;
+		const bool launchAtBlockStart = alignSyncedAutoToHost();
+		if (reverseEnabled || backNForthEnabled)
+		{
+			clearActiveGranularVoices();
+			syncedAutoDryFillActive_ = ! launchAtBlockStart;
+		}
+
+		if (launchAtBlockStart)
+			hostSyncedAutoLaunchAtBlockStart = true;
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		bnfDumpCurrentLaunchReason_ = kBnfDumpReasonAutoStart;
+		logBnfDeterminismEvent (BnfDumpEvent::schedulerReset);
+		bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
+#endif
+	}
+	else if (syncedAutoPeriodChanged && ! hostTransport_.deterministicResetCandidate)
+	{
+		// Changing synced TIME/MOD while AUTO is already running must behave like
+		// re-arming AUTO on the host grid, otherwise the old free-running phase
+		// leaks into the new division and repeated DAW loops can produce a
+		// different first grain.
+		smoothedGrainLen_ = effectiveGrainLen;
+		const bool launchAtBlockStart = alignSyncedAutoToHost();
+		if (reverseEnabled || backNForthEnabled)
+		{
+			clearActiveGranularVoices();
+			syncedAutoDryFillActive_ = ! launchAtBlockStart;
+		}
+
+		if (launchAtBlockStart)
+			hostSyncedAutoLaunchAtBlockStart = true;
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		bnfDumpCurrentLaunchReason_ = kBnfDumpReasonAutoPeriod;
+		logBnfDeterminismEvent (BnfDumpEvent::schedulerReset);
+		bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
+#endif
+	}
+	if (! canHostAlignSyncedAuto || (! reverseEnabled && ! backNForthEnabled))
+		syncedAutoDryFillActive_ = false;
+	lastSyncedAutoPeriodPpq_ = canHostAlignSyncedAuto ? syncedAutoPeriodPpq : 0.0;
 
 	// Per-sample processing ----------------------------------------
 	const int wrapMask = grainBufferLength - 1;
@@ -1110,6 +1426,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	for (int i = 0; i < numSamples; ++i)
 	{
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		bnfDumpCurrentSampleInBlock_ = i;
+#endif
+
 		// S&H chaos advance
 		if (chaosDelayEnabled_) advanceChaosD();
 		if (chaosFilterEnabled_) advanceChaosF();
@@ -1122,25 +1442,37 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		smoothedWetLevel   += (wetLevelTarget - smoothedWetLevel) * kGainSmoothStep;
 		smoothedPan        += (panTarget - smoothedPan) * kGainSmoothStep;
 		smoothedLimThreshold += (limThreshLinTarget - smoothedLimThreshold) * kGainSmoothStep;
+		syncedAutoDryFillGain_ += ((syncedAutoDryFillActive_ ? 1.0f : 0.0f) - syncedAutoDryFillGain_) * kGainSmoothStep;
+		if (! syncedAutoDryFillActive_ && syncedAutoDryFillGain_ < kSnapEpsilon)
+			syncedAutoDryFillGain_ = 0.0f;
 
-		// Smooth pitch & formant ratios (same EMA as gain to avoid abrupt changes)
+		// Smooth pitch & scan ratios (same EMA as gain to avoid abrupt changes)
 		smoothedPitchRatio_   += (currentPitchRatio_   - smoothedPitchRatio_)   * kGainSmoothStep;
-		smoothedFormantRatio_ += (currentFormantRatio_ - smoothedFormantRatio_) * kGainSmoothStep;
+		smoothedScanRatio_    += (currentScanRatio_    - smoothedScanRatio_)    * kGainSmoothStep;
 
 		// Smooth grain length (velocity-controlled glide when MIDI active)
 		smoothedGrainLen_ += (effectiveGrainLen - smoothedGrainLen_) * grainLenGlideStep_;
 		if (grainSizeTransitionSamplesRemaining_ > 0)
 			--grainSizeTransitionSamplesRemaining_;
 
-		// Capture length from smoothed grain length & formant ratio
+		// Capture length from smoothed grain length & scan ratio
 		const float captureLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
-		                                       smoothedGrainLen_ / smoothedFormantRatio_);
+		                                       smoothedGrainLen_ / smoothedScanRatio_);
 		const float backNForthEventLen = smoothedGrainLen_;
 		const int backNForthCellCount = juce::jmax (1, (int) std::ceil (backNForthEventLen / backNForthMaxCellLenSamples));
 		const float backNForthCellLen = backNForthEventLen / (float) backNForthCellCount;
 		const float launchBackNForthLegLen = backNForthEnabled ? backNForthCellLen * 0.5f : 0.0f;
 		const float launchGrainLen = backNForthEnabled ? backNForthEventLen : captureLen;
 		const float launchSourceLen = captureLen;
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		bnfDumpCaptureLen_ = captureLen;
+		bnfDumpBackNForthEventLen_ = backNForthEventLen;
+		bnfDumpBackNForthCellLen_ = backNForthCellLen;
+		bnfDumpLaunchGrainLen_ = launchGrainLen;
+		bnfDumpLaunchSourceLen_ = launchSourceLen;
+		bnfDumpLaunchLegLen_ = launchBackNForthLegLen;
+#endif
 
 		// Read input
 		float inL = (channelL != nullptr) ? channelL[i] * smoothedInputGain : 0.0f;
@@ -1168,29 +1500,54 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 		// Grain triggering -------------------------------------------
 		bool shouldLaunch = false;
+#if GRA_TR_BNF_DETERMINISM_DUMP
+		int launchReason = kBnfDumpReasonNone;
+#endif
 
 		if (autoEnabled)
 		{
-			// First sample after enabling AUTO: launch immediately
-			if ((autoJustEnabled || hostSyncedAutoLaunchAtBlockStart) && i == 0)
+			// Unsynced AUTO starts immediately; synced AUTO follows host phase.
+			if (((autoJustEnabled && ! suppressImmediateAutoStart) || hostSyncedAutoLaunchAtBlockStart) && i == 0)
+			{
 				shouldLaunch = true;
+#if GRA_TR_BNF_DETERMINISM_DUMP
+				launchReason |= kBnfDumpReasonAutoStart;
+#endif
+			}
 
 			autoPhaseCounter_ += 1.0f;
 			if (autoPhaseCounter_ >= smoothedGrainLen_)
 			{
 				autoPhaseCounter_ -= smoothedGrainLen_;
 				shouldLaunch = true;
+#if GRA_TR_BNF_DETERMINISM_DUMP
+				launchReason |= kBnfDumpReasonAutoPeriod;
+#endif
 			}
 		}
 
 		// TRIGGER edge: launch on first sample of the block when edge detected
 		if (triggerEdge && i == 0)
+		{
 			shouldLaunch = true;
+#if GRA_TR_BNF_DETERMINISM_DUMP
+			launchReason |= kBnfDumpReasonTriggerEdge;
+#endif
+		}
 
 		if (shouldLaunch)
 		{
+			syncedAutoDryFillActive_ = false;
+
 			const bool launchReverse = reverseEnabled;
 			const int decorrelationOffsetSamples = - (int) (launchSourceLen * 0.5f);
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+			bnfDumpCurrentLaunchReason_ = launchReason;
+			++bnfDumpLaunchSerial_;
+			bnfDumpCurrentAnchorOffsetSamples_ = 0;
+			logBnfDeterminismEvent (BnfDumpEvent::launchRequest);
+#endif
 
 			if (mode == 0) // MONO: same grain for both channels
 			{
@@ -1223,6 +1580,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				launchNewGrain (1, launchGrainLen, launchSourceLen, launchReverse, backNForthEnabled,
 				                0, launchBackNForthLegLen);
 			}
+
+#if GRA_TR_BNF_DETERMINISM_DUMP
+			bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
+			bnfDumpCurrentAnchorOffsetSamples_ = 0;
+#endif
 		}
 
 		// Read grains and compute wet signal --------------------------
@@ -1250,7 +1612,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 					if (autoEnabled || triggerEnabled)
 					{
 						// Immediate relaunch: prevents silence gaps when pitch > 1
-						// or formant > 0 causes the grain to end before the auto
+						// or SCAN > 0 causes the grain to end before the auto
 						// phase counter triggers the next one.
 						const bool launchReverse = reverseEnabled;
 						const int relaunchAnchorOffsetSamples = ((mode == 2 || mode == 3) && ch == 1)
@@ -1259,6 +1621,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 						const float relaunchSourceLen = (mode == 3 && ch == 1 && backNForthEnabled)
 							? launchSourceLen * 0.5f
 							: launchSourceLen;
+#if GRA_TR_BNF_DETERMINISM_DUMP
+						bnfDumpCurrentLaunchReason_ = kBnfDumpReasonVoiceEnd;
+						++bnfDumpLaunchSerial_;
+						bnfDumpCurrentAnchorOffsetSamples_ = relaunchAnchorOffsetSamples;
+#endif
 						launchNewGrain (ch, launchGrainLen, relaunchSourceLen,
 						                launchReverse, backNForthEnabled, relaunchAnchorOffsetSamples,
 						                launchBackNForthLegLen);
@@ -1268,6 +1635,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 							voiceA_[1].pitchRatio = smoothedPitchRatio_ * 0.5f;
 						}
 						autoPhaseCounter_ = 0.0f;
+#if GRA_TR_BNF_DETERMINISM_DUMP
+						bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
+						bnfDumpCurrentAnchorOffsetSamples_ = 0;
+#endif
 					}
 					else
 					{
@@ -1350,8 +1721,17 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (invStr == 1 && numChannels >= 2) std::swap (wL, wR);
 
 		float dG, wG;
-		if (mixMode == 0) { dG = 1.0f - smoothedMix; wG = smoothedMix; }
-		else              { dG = smoothedDryLevel; wG = smoothedWetLevel; }
+		if (mixMode == 0)
+		{
+			dG = 1.0f - smoothedMix;
+			wG = smoothedMix;
+			dG = juce::jlimit (0.0f, 1.0f, dG + (1.0f - dG) * syncedAutoDryFillGain_);
+		}
+		else
+		{
+			dG = smoothedDryLevel;
+			wG = smoothedWetLevel;
+		}
 		wL *= wG;
 		wR *= wG;
 		const float dL = dryL * dG;
@@ -1420,6 +1800,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 	}
 
+#if GRA_TR_BNF_DETERMINISM_DUMP
+	bnfDumpProcessedSamples_ += (std::uint64_t) juce::jmax (0, numSamples);
+	++bnfDumpBlockIndex_;
+#endif
 }
 
 //==============================================================================
@@ -1529,8 +1913,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 		juce::NormalisableRange<float> (kPitchMin, kPitchMax, 0.01f, 1.0f), kPitchDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
-		kParamFormant, "Formant",
-		juce::NormalisableRange<float> (kFormantMin, kFormantMax, 0.01f, 1.0f), kFormantDefault));
+		kParamScan, "Scan",
+		juce::NormalisableRange<float> (kScanMin, kScanMax, 0.001f, 1.0f), kScanDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamSmooth, "Smooth",

@@ -96,8 +96,8 @@ private:
                 return juce::String (rounded2, 2);
             }
 
-            // For formant (-12 to +12 semitones)
-            if (owner != nullptr && this == &owner->formantSlider)
+            // For SCAN (-100% to +100%)
+            if (owner != nullptr && this == &owner->scanSlider)
             {
                 const double rounded2 = std::round (v * 100.0) / 100.0;
                 if (rounded2 > 0.0)
@@ -141,7 +141,7 @@ private:
     BarSlider timeSlider;
     BarSlider modSlider;
     BarSlider pitchSlider;
-    BarSlider formantSlider;
+    BarSlider scanSlider;
     BarSlider smoothSlider;
     BarSlider modeSlider;
     BarSlider inputSlider;
@@ -180,7 +180,7 @@ private:
     std::unique_ptr<SliderAttachment> timeSyncAttachment;
     std::unique_ptr<SliderAttachment> modAttachment;
     std::unique_ptr<SliderAttachment> pitchAttachment;
-    std::unique_ptr<SliderAttachment> formantAttachment;
+    std::unique_ptr<SliderAttachment> scanAttachment;
     std::unique_ptr<SliderAttachment> smoothAttachment;
     std::unique_ptr<SliderAttachment> modeAttachment;
     std::unique_ptr<SliderAttachment> inputAttachment;
@@ -438,8 +438,8 @@ private:
     juce::String getPitchText() const;
     juce::String getPitchTextShort() const;
 
-    juce::String getFormantText() const;
-    juce::String getFormantTextShort() const;
+    juce::String getScanText() const;
+    juce::String getScanTextShort() const;
 
     juce::String getSmoothText() const;
     juce::String getSmoothTextShort() const;
@@ -505,8 +505,8 @@ private:
     juce::String cachedTimeTextShort;
     juce::String cachedPitchTextFull;
     juce::String cachedPitchTextShort;
-    juce::String cachedFormantTextFull;
-    juce::String cachedFormantTextShort;
+    juce::String cachedScanTextFull;
+    juce::String cachedScanTextShort;
     juce::String cachedSmoothTextFull;
     juce::String cachedSmoothTextShort;
     juce::String cachedModeTextFull;
@@ -527,7 +527,7 @@ private:
 
     juce::String cachedTimeIntOnly;
     juce::String cachedPitchIntOnly;
-    juce::String cachedFormantIntOnly;
+    juce::String cachedScanIntOnly;
     juce::String cachedSmoothIntOnly;
     juce::String cachedModeIntOnly;
     juce::String cachedModIntOnly;

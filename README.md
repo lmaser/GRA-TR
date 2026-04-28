@@ -3,15 +3,15 @@
 <br/><br/>
 
 GRA-TR is a granular audio effect built for texture generation, spectral manipulation, and time-frozen soundscapes.
-It captures audio into a circular buffer and replays it as overlapping grains with independent pitch, formant, smoothness, and time control, driven by MIDI notes, auto-trigger, or manual trigger.
+It captures audio into a circular buffer and replays it as overlapping grains with independent pitch, scan, smoothness, and time control, driven by MIDI notes, auto-trigger, or manual trigger.
 
 ## Concept
 
-GRA-TR treats granular synthesis as a real-time performance tool. By splitting incoming audio into small grains and replaying them with adjustable pitch and formant ratios, it produces effects ranging from subtle thickening to extreme spectral transformation - all while keeping pitch and timbre independently controllable.
+GRA-TR treats granular synthesis as a real-time performance tool. By splitting incoming audio into small grains and replaying them with adjustable pitch and scan ratio, it produces effects ranging from subtle thickening to extreme spectral transformation - all while keeping pitch and source-span motion independently controllable.
 
 The trigger system offers three modes: AUTO continuously relaunches grains at the rate set by TIME, TRIGGER freezes the buffer and loops whatever was captured (creating infinite sustain from any source), and MIDI overrides grain length to match incoming note pitch - turning the granular engine into a resonator that plays melodies.
 
-Formant control scales the capture window independently from read rate, shifting the spectral center without changing pitch. SMOOTH controls the taper and crossfade depth of each grain in both forward and reverse playback. Reverse and Back N Forth modes can play grains backward or alternate between backward and forward loops. Combined with per-channel stereo processing, GRA-TR can produce everything from subtle chorusing to alien granular pads.
+SCAN scales the captured source span independently from read rate, changing how much of the internal grain loop is traversed without changing pitch. SMOOTH controls the taper and crossfade depth of each grain in both forward and reverse playback. Reverse and Back N Forth modes can play grains backward or alternate between backward and forward loops. Combined with per-channel stereo processing, GRA-TR can produce everything from subtle chorusing to alien granular pads.
 
 ## Interface
 
@@ -30,7 +30,7 @@ The value column to the right of each slider shows the current state in context:
 - TIME shows milliseconds, MIDI note name when MIDI is active, or sync division when SYNC is active.
 - MOD shows the frequency multiplier.
 - PITCH shows semitones with +/- sign and two decimal places.
-- FORMANT shows semitones with +/- sign and two decimal places.
+- SCAN shows percentage with +/- sign and two decimal places.
 - SMOOTH shows percentage.
 - STYLE shows MONO/STEREO/WIDE/DUAL.
 - INPUT/OUTPUT show dB values.
@@ -60,12 +60,12 @@ Grain read-rate control. Changes how fast each grain is read back, directly affe
 +12 st = reads at 2x speed (octave up). -12 st = reads at 0.5x speed (octave down).
 The capture window size stays the same - only the playback speed changes.
 
-### FORMANT (-12.00 to +12.00 semitones)
+### SCAN (-100.00% to +100.00%)
 
-Spectral character control. Scales the capture window size independently from read rate.
-+12 st = captures half the window (brighter, thinner timbre at the same pitch).
--12 st = captures double the window (warmer, fuller timbre at the same pitch).
-Formant and pitch are independent: pitch changes speed, formant changes spectral content.
+Source-span control. Scales the captured window independently from read rate.
++100% = captures half the source span.
+-100% = captures double the source span.
+SCAN and PITCH are independent controls: PITCH changes read speed, while SCAN changes the captured source span.
 
 ### SMOOTH (0-100%)
 
@@ -74,7 +74,7 @@ Lower values keep entries and exits tighter and more immediate. Higher values le
 
 Default: 25%.
 
-SMOOTH applies to both forward and reverse playback. It is locked per grain at launch time, so changing SMOOTH does not reshape grains that are already playing. It does not change pitch or formant ratio directly - it changes how softly each grain fades in and out.
+SMOOTH applies to both forward and reverse playback. It is locked per grain at launch time, so changing SMOOTH does not reshape grains that are already playing. It does not change pitch or scan ratio directly - it changes how softly each grain fades in and out.
 
 ### STYLE
 
@@ -199,7 +199,7 @@ RVS controls the starting direction: with RVS off, BNF starts forward then rever
 
 For manual TIME and SYNC modes, BNF treats the current TIME/SYNC + MOD period as the event length, then divides long events into internal ping-pong cells up to 1/8-note long. Each cell is split into two equal legs: starting direction first, opposite direction second. If a setting produces eight grain events, BNF still produces eight events; each one contains its own forward+reverse or reverse+forward motion.
 
-FORMANT still scales the captured source window, and that window is divided across the internal BNF cells so BNF remains rhythmically consistent while retaining formant control.
+SCAN still scales the captured source window, and that window is divided across the internal BNF cells so BNF remains rhythmically consistent while retaining scan control.
 
 ### CHAOS
 
@@ -252,10 +252,10 @@ Modes:
 - **Grain voices**: Dual voice per channel (A = primary fade-in, B = crossfade-out) for click-free transitions.
 - **Envelope**: Precomputed 129-point Tukey (raised-cosine) lookup table with linear interpolation. No per-sample trigonometry. SMOOTH controls how much of each grain is used as taper and is locked per grain at launch time.
 - **Pitch**: Read rate = `2^(semitones/12)`. Grains advance by pitch ratio each sample.
-- **Formant**: Capture length = `effectiveGrainLen / 2^(formantSemitones/12)`. Scales capture window independently from pitch.
+- **Scan**: Capture length = `effectiveGrainLen / 2^(scanPercent/100)`. Scales the captured source span independently from pitch.
 - **Reverse**: Read position always advances forward; reverse mapping (`grainLen - 1 - readPos`) is applied in the read function so reverse playback starts on the last valid sample inside the captured grain.
-- **Back N Forth**: Direction turns inside each grain event. RVS seeds the initial direction. Long BNF events are subdivided into internal ping-pong cells with a 1/8-note maximum cell length, while FORMANT still scales the captured source window used by those cells.
-- **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, pitch ratio, formant ratio, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide. Large TIME/MOD/SYNC size transitions apply a temporary minimum grain taper and slower grain-length glide to avoid discontinuities without changing steady-state playback.
+- **Back N Forth**: Direction turns inside each grain event. RVS seeds the initial direction. Long BNF events are subdivided into internal ping-pong cells with a 1/8-note maximum cell length, while SCAN still scales the captured source window used by those cells.
+- **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, pitch ratio, scan ratio, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide. Large TIME/MOD/SYNC size transitions apply a temporary minimum grain taper and slower grain-length glide to avoid discontinuities without changing steady-state playback.
 - **Wet filter**: Biquad HP/LP on the wet signal. Transposed Direct Form II. Coefficients updated once per block.
 - **Tilt EQ**: First-order symmetric shelf at 1 kHz. Coefficients cached with tolerance-based update.
 - **Chaos**: Hermite cubic interpolation between random targets with per-channel quadrature drift LFO. Per-block coefficient precomputation.
@@ -274,7 +274,7 @@ Modes:
 - Added dual-stage transparent peak limiter with LIM THRESHOLD (-36 to 0 dB) and LIM MODE (NONE/WET/GLOBAL). Stereo-linked gain reduction with 2 ms/10 ms leveler + instant/100 ms brickwall stages.
 - Added SEND dry/wet controls and smoothing for SEND dry/wet, pan, and limiter threshold to keep fast GUI moves artifact-free.
 - Replaced the old ENV GRA workflow with the main-panel SMOOTH control for grain taper/crossfade shaping in both forward and reverse playback.
-- PITCH and FORMANT now support two-decimal precision in the GUI and numeric prompt.
+- PITCH and SCAN now support two-decimal precision in the GUI and numeric prompt; SCAN is processed internally with 0.001% parameter resolution.
 - Added BNF (Back N Forth) mode for deterministic forward/reverse alternation.
 - SMOOTH now defaults to 25% for safer click-free startup behavior.
 - Improved deterministic DAW loop/replay behavior for AUTO + SYNC using host transport/PPQ alignment.
