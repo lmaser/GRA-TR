@@ -84,11 +84,12 @@ Routing topology for the granular engine:
 - **WIDE**: Cross-channel grain offset for stereo widening.
 - **DUAL**: Independent left/right with the right channel at half the grain length.
 
-### INPUT (-100 to 0 dB)
+### INPUT (-INF to +24 dB)
 
 Pre-processing gain. Controls how much signal enters the grain buffer.
+The fader floor is -144 dB, displayed as -INF; 0 dB is centered on the control.
 
-### OUTPUT (-100 to +24 dB)
+### OUTPUT (-INF to +24 dB)
 
 Post-processing gain. Applied to the wet signal only.
 

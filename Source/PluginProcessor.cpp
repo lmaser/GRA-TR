@@ -60,6 +60,19 @@ namespace
 		return (dB <= -100.0f) ? 0.0f : std::exp2 (dB * 0.16609640474f);
 	}
 
+	inline float gainFaderDecibelsToGain (float dB) noexcept
+	{
+		return (dB <= GRATRAudioProcessor::kGainFloorDb) ? 0.0f : std::exp2 (dB * 0.16609640474f);
+	}
+
+	inline juce::NormalisableRange<float> makeGainFaderRange() noexcept
+	{
+		return juce::NormalisableRange<float> (GRATRAudioProcessor::kGainFloorDb,
+		                                       GRATRAudioProcessor::kGainMaxDb,
+		                                       0.0f,
+		                                       GRATRAudioProcessor::kGainSkew);
+	}
+
 	// Precomputed Tukey taper for grain envelope -------------------
 	constexpr int kTaperTableSize = 129;
 	struct TaperTable
@@ -488,6 +501,9 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	currentScanRatio_ = 1.0f;
 	smoothedPitchRatio_ = 1.0f;
 	smoothedScanRatio_ = 1.0f;
+	lastMidiNote.store (-1, std::memory_order_relaxed);
+	lastMidiVelocity.store (0, std::memory_order_relaxed);
+	currentMidiFrequency.store (0.0f, std::memory_order_relaxed);
 
 	smoothedInputGain = fastDecibelsToGain (loadAtomicOrDefault (inputParam, kInputDefault));
 	smoothedOutputGain = fastDecibelsToGain (loadAtomicOrDefault (outputParam, kOutputDefault));
@@ -526,8 +542,16 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	chaosDelayMaxSamples_ = 0.0f; smoothedChaosDelayMaxSamples_ = 0.0f;
 	chaosGainMaxDb_ = 0.0f; smoothedChaosGainMaxDb_ = 0.0f;
 	chaosFilterMaxOct_ = 0.0f; smoothedChaosFilterMaxOct_ = 0.0f;
+	chaosDriveAmtSmoothed_ = 0.0f;
+	chaosDriveSpdSmoothed_ = kChaosSpdDefault;
+	chaosDriveParamSmoothReady_ = false;
+	chaosFilterAmtSmoothed_ = 0.0f;
+	chaosFilterSpdSmoothed_ = kChaosSpdDefault;
+	chaosFilterParamSmoothReady_ = false;
 	for (int c = 0; c < 2; ++c)
 	{
+		chaosDelaySmoothedSamples_[c] = 0.0f;
+		chaosDelaySmoothReady_[c] = false;
 		chaosDPrev_[c] = chaosDCurr_[c] = chaosDNext_[c] = 0.0f;
 		chaosDPhase_[c] = 0.0f; chaosDDriftPhase_[c] = 0.0f; chaosDDriftFreqHz_[c] = 0.0f; chaosDOut_[c] = 0.0f;
 		chaosGPrev_[c] = chaosGCurr_[c] = chaosGNext_[c] = 0.0f;
@@ -541,6 +565,7 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
 	// Precompute sampleRate-dependent smooth coefficients
 	cachedChaosParamSmoothCoeff_ = std::exp (-1.0f / ((float) currentSampleRate * 0.010f));
+	chaosDelaySmoothStep_ = 1.0f - std::exp (-1.0f / ((float) currentSampleRate * 0.002f));
 
 	// Limiter state reset
 	limEnv1_[0] = limEnv1_[1] = kLimFloor;
@@ -718,7 +743,8 @@ void GRATRAudioProcessor::filterWetSample (float& wetL, float& wetR)
 	if (--filterCoeffCountdown_ <= 0)
 	{
 		filterCoeffCountdown_ = kFilterCoeffUpdateInterval;
-		const bool chaosFilterActive = chaosFilterEnabled_ && chaosAmtF_ > 0.01f;
+		const bool chaosFilterActive = chaosFilterEnabled_
+			&& (chaosAmtF_ > 0.01f || (chaosFilterParamSmoothReady_ && chaosFilterAmtSmoothed_ > 0.01f));
 		if (chaosFilterActive)
 		{
 			const float sHp = smoothedFilterHpFreq_;
@@ -766,7 +792,8 @@ void GRATRAudioProcessor::filterWetSample (float& wetL, float& wetR)
 		}
 	}
 
-	const bool chaosFilterActive = chaosFilterEnabled_ && chaosAmtF_ > 0.01f;
+	const bool chaosFilterActive = chaosFilterEnabled_
+		&& (chaosAmtF_ > 0.01f || (chaosFilterParamSmoothReady_ && chaosFilterAmtSmoothed_ > 0.01f));
 	if (wetFilterHpOn_ || chaosFilterActive)
 	{
 		for (int s = 0; s < wetFilterNumSectionsHp_; ++s)
@@ -993,7 +1020,13 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			if (selectedMidiChannel > 0 && msg.getChannel() != selectedMidiChannel)
 				continue;
 
-			if (msg.isNoteOn())
+			if (msg.isAllNotesOff() || msg.isAllSoundOff())
+			{
+				lastMidiNote.store (-1, std::memory_order_relaxed);
+				lastMidiVelocity.store (0, std::memory_order_relaxed);
+				currentMidiFrequency.store (0.0f, std::memory_order_relaxed);
+			}
+			else if (msg.isNoteOn())
 			{
 				const int noteNumber = msg.getNoteNumber();
 				lastMidiNote.store (noteNumber, std::memory_order_relaxed);
@@ -1006,6 +1039,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				if (msg.getNoteNumber() == lastMidiNote.load (std::memory_order_relaxed))
 				{
 					lastMidiNote.store (-1, std::memory_order_relaxed);
+					lastMidiVelocity.store (0, std::memory_order_relaxed);
 					currentMidiFrequency.store (0.0f, std::memory_order_relaxed);
 				}
 			}
@@ -1016,6 +1050,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (lastMidiNote.load (std::memory_order_relaxed) >= 0)
 		{
 			lastMidiNote.store (-1, std::memory_order_relaxed);
+			lastMidiVelocity.store (0, std::memory_order_relaxed);
 			currentMidiFrequency.store (0.0f, std::memory_order_relaxed);
 		}
 	}
@@ -1074,8 +1109,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const int invPol     = loadIntParamOrDefault (invPolParam,  kInvPolDefault);
 	const int invStr     = loadIntParamOrDefault (invStrParam,  kInvStrDefault);
 
-	const float inputGain  = fastDecibelsToGain (inputGainDb);
-	const float outputGain = fastDecibelsToGain (outputGainDb);
+	const float inputGain  = gainFaderDecibelsToGain (inputGainDb);
+	const float outputGain = gainFaderDecibelsToGain (outputGainDb);
 
 	// Limiter ------------------------------------------------------
 	const int limMode = loadIntParamOrDefault (limModeParam, kLimModeDefault);
@@ -1208,8 +1243,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	{
 		if (chaosDelayEnabled_)
 		{
-			const float rawAmtD = loadAtomicOrDefault (chaosAmtParam, kChaosAmtDefault);
-			const float rawSpdD = loadAtomicOrDefault (chaosSpdParam, kChaosSpdDefault);
+			const float rawAmtD = juce::jlimit (kChaosAmtMin, kChaosAmtMax,
+				loadAtomicOrDefault (chaosAmtParam, kChaosAmtDefault));
+			const float rawSpdD = juce::jlimit (kChaosSpdMin, kChaosSpdMax,
+				loadAtomicOrDefault (chaosSpdParam, kChaosSpdDefault));
 			chaosAmtD_       = rawAmtD;
 			chaosAmtNormD_   = rawAmtD * 0.01f;
 			chaosShPeriodD_  = (float) currentSampleRate / rawSpdD;
@@ -1217,21 +1254,53 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			chaosDelayMaxSamples_ = amtNormD * 0.005f * (float) currentSampleRate;
 			chaosGainMaxDb_       = amtNormD * 1.0f;
 		}
-		else { chaosDelayMaxSamples_ = 0.0f; chaosGainMaxDb_ = 0.0f; }
+		else
+		{
+			chaosDelayMaxSamples_ = 0.0f;
+			chaosGainMaxDb_ = 0.0f;
+			chaosDriveAmtSmoothed_ = 0.0f;
+			chaosDriveSpdSmoothed_ = kChaosSpdDefault;
+			chaosDriveParamSmoothReady_ = false;
+			chaosDelaySmoothedSamples_[0] = chaosDelaySmoothedSamples_[1] = 0.0f;
+			chaosDelaySmoothReady_[0] = chaosDelaySmoothReady_[1] = false;
+		}
 
 		if (chaosFilterEnabled_)
 		{
-			const float rawAmtF = loadAtomicOrDefault (chaosAmtFilterParam, kChaosAmtDefault);
-			const float rawSpdF = loadAtomicOrDefault (chaosSpdFilterParam, kChaosSpdDefault);
+			const float rawAmtF = juce::jlimit (kChaosAmtMin, kChaosAmtMax,
+				loadAtomicOrDefault (chaosAmtFilterParam, kChaosAmtDefault));
+			const float rawSpdF = juce::jlimit (kChaosSpdMin, kChaosSpdMax,
+				loadAtomicOrDefault (chaosSpdFilterParam, kChaosSpdDefault));
 			chaosAmtF_       = rawAmtF;
 			chaosShPeriodF_  = (float) currentSampleRate / rawSpdF;
 			chaosFilterMaxOct_ = rawAmtF * 0.01f * 2.0f;
 		}
-		else { chaosFilterMaxOct_ = 0.0f; }
+		else
+		{
+			chaosFilterMaxOct_ = 0.0f;
+			chaosFilterAmtSmoothed_ = 0.0f;
+			chaosFilterSpdSmoothed_ = kChaosSpdDefault;
+			chaosFilterParamSmoothReady_ = false;
+		}
 
 		chaosParamSmoothCoeff_ = cachedChaosParamSmoothCoeff_;
 	}
-	else { chaosAmtD_ = 0.0f; chaosAmtF_ = 0.0f; chaosDelayMaxSamples_ = 0.0f; chaosGainMaxDb_ = 0.0f; chaosFilterMaxOct_ = 0.0f; }
+	else
+	{
+		chaosAmtD_ = 0.0f;
+		chaosAmtF_ = 0.0f;
+		chaosDelayMaxSamples_ = 0.0f;
+		chaosGainMaxDb_ = 0.0f;
+		chaosFilterMaxOct_ = 0.0f;
+		chaosDriveAmtSmoothed_ = 0.0f;
+		chaosDriveSpdSmoothed_ = kChaosSpdDefault;
+		chaosDriveParamSmoothReady_ = false;
+		chaosFilterAmtSmoothed_ = 0.0f;
+		chaosFilterSpdSmoothed_ = kChaosSpdDefault;
+		chaosFilterParamSmoothReady_ = false;
+		chaosDelaySmoothedSamples_[0] = chaosDelaySmoothedSamples_[1] = 0.0f;
+		chaosDelaySmoothReady_[0] = chaosDelaySmoothReady_[1] = false;
+	}
 
 	chaosStereo_ = (mode >= 1);
 
@@ -1926,11 +1995,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamInput, "Input",
-		juce::NormalisableRange<float> (kInputMin, kInputMax, 0.0f, 2.5f), kInputDefault));
+		makeGainFaderRange(), kInputDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamOutput, "Output",
-		juce::NormalisableRange<float> (kOutputMin, kOutputMax, 0.0f, 3.23f), kOutputDefault));
+		makeGainFaderRange(), kOutputDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamMix, "Mix",
