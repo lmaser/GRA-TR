@@ -1082,6 +1082,8 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 	// Map readPos within grain to buffer position. BNF performs the direction
 	// turn inside the same voice so the midpoint does not relaunch or re-envelope.
 	float readOffset = 0.0f;
+	float bnfBoundaryBlend = 0.0f;
+	float bnfBoundaryReadOffset = 0.0f;
 	if (v.backNForth)
 	{
 		const float legLen = juce::jlimit (1.0f, v.grainLenSamples, v.backNForthLegLenSamples);
@@ -1105,6 +1107,25 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 		const float readSpan = juce::jmin (sourceCellSpan, legSpan * v.pitchRatio);
 		const float travel = juce::jlimit (0.0f, readSpan, legPos * v.pitchRatio);
 		readOffset = sourceCellStart + (reverseLeg ? (readSpan - travel) : travel);
+
+		if (cellIndex + 1 < cellCount)
+		{
+			const float boundaryXfadeSamples = juce::jlimit (8.0f, 512.0f,
+				juce::jmin (cellLen * 0.10f, (float) currentSampleRate * 0.006f));
+			const float fadeStart = cellLen - boundaryXfadeSamples;
+			if (cellPos > fadeStart)
+			{
+				const float t = juce::jlimit (0.0f, 1.0f, (cellPos - fadeStart) / boundaryXfadeSamples);
+				bnfBoundaryBlend = t * t * (3.0f - 2.0f * t);
+
+				const int nextCellIndex = cellIndex + 1;
+				const float nextSourceCellStart = juce::jmin (sourceMax, sourceCellLen * (float) nextCellIndex);
+				const float nextSourceCellSpan = juce::jmax (0.0f, juce::jmin (sourceMax - nextSourceCellStart,
+				                                                                sourceCellLen - 1.0f));
+				const float nextReadSpan = juce::jmin (nextSourceCellSpan, legSpan * v.pitchRatio);
+				bnfBoundaryReadOffset = nextSourceCellStart + (v.reverse ? nextReadSpan : 0.0f);
+			}
+		}
 	}
 	else
 	{
@@ -1141,19 +1162,30 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 			bendSafety = juce::jmin (bendSafety, smootherStep (turnDistance / bendGuardSamples));
 		}
 
-		readOffset = juce::jlimit (0.0f, sourceMax,
-			readOffset + std::sin (v.jitterReadBendPhase) * v.jitterReadBendDepthSamples * bendSafety);
+		const float bendDelta = std::sin (v.jitterReadBendPhase) * v.jitterReadBendDepthSamples * bendSafety;
+		readOffset = juce::jlimit (0.0f, sourceMax, readOffset + bendDelta);
+		if (bnfBoundaryBlend > 0.0f)
+			bnfBoundaryReadOffset = juce::jlimit (0.0f, sourceMax, bnfBoundaryReadOffset + bendDelta);
 	}
 
-	const float bufPos = (float) v.anchorWritePos + readOffset;
+	auto readAtOffset = [&] (float offset) noexcept
+	{
+		const float bufPos = (float) v.anchorWritePos + offset;
 
-	const int idx0  = ((int) bufPos) & wrapMask;
-	const int idxM1 = (idx0 + wrapMask) & wrapMask;
-	const int idx1  = (idx0 + 1) & wrapMask;
-	const int idx2  = (idx0 + 2) & wrapMask;
-	const float frac = bufPos - std::floor (bufPos);
+		const int idx0  = ((int) bufPos) & wrapMask;
+		const int idxM1 = (idx0 + wrapMask) & wrapMask;
+		const int idx1  = (idx0 + 1) & wrapMask;
+		const int idx2  = (idx0 + 2) & wrapMask;
+		const float frac = bufPos - std::floor (bufPos);
 
-	return hermite4pt (buf[idxM1], buf[idx0], buf[idx1], buf[idx2], frac);
+		return hermite4pt (buf[idxM1], buf[idx0], buf[idx1], buf[idx2], frac);
+	};
+
+	if (bnfBoundaryBlend > 0.0f)
+		return readAtOffset (readOffset) * (1.0f - bnfBoundaryBlend)
+		     + readAtOffset (bnfBoundaryReadOffset) * bnfBoundaryBlend;
+
+	return readAtOffset (readOffset);
 }
 
 float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
@@ -1725,7 +1757,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		const float backNForthCellLen = backNForthEventLen / (float) backNForthCellCount;
 		const float launchBackNForthLegLen = backNForthEnabled ? backNForthCellLen * 0.5f : 0.0f;
 		const float launchGrainLen = backNForthEnabled ? backNForthEventLen : captureLen;
-		const float launchSourceLen = captureLen;
+		const float backNForthPitchSpanScale = backNForthEnabled
+			? juce::jmax (1.0f, smoothedPitchRatio_ * 0.5f)
+			: 1.0f;
+		const float launchSourceLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
+		                                            captureLen * backNForthPitchSpanScale);
 
 #if GRA_TR_BNF_DETERMINISM_DUMP
 		bnfDumpCaptureLen_ = captureLen;
