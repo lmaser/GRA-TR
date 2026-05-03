@@ -22,6 +22,7 @@ public:
 	static constexpr const char* kParamMod        = "mod";
 	static constexpr const char* kParamPitch      = "pitch";
 	static constexpr const char* kParamScan       = "scan";
+	static constexpr const char* kParamJitter     = "jitter";
 	static constexpr const char* kParamSmooth     = "smooth";
 	static constexpr const char* kParamMode       = "mode";       // 0=MONO 1=STEREO 2=WIDE 3=DUAL
 	static constexpr const char* kParamInput      = "input";
@@ -112,6 +113,10 @@ public:
 	static constexpr float kScanMin     = -100.0f;
 	static constexpr float kScanMax     =  100.0f;
 	static constexpr float kScanDefault =    0.0f;
+
+	static constexpr float kJitterMin     = 0.0f;
+	static constexpr float kJitterMax     = 1.0f;
+	static constexpr float kJitterDefault = 0.0f;
 
 	static constexpr float kSmoothMin     = 0.0f;
 	static constexpr float kSmoothMax     = 100.0f;
@@ -271,6 +276,9 @@ private:
 		float fadeGain         = 0.0f;    // crossfade envelope (0->1 fade-in, 1->0 fade-out)
 		float pitchRatio       = 1.0f;    // locked pitch ratio at launch time
 		float smoothFraction   = 0.02f;   // locked taper/fade amount at launch time
+		float jitterReadBendDepthSamples = 0.0f;
+		float jitterReadBendPhase = 0.0f;
+		float jitterReadBendPhaseStep = 0.0f;
 		int   backNForthCellCount = 1;
 		bool  active           = false;
 		bool  reverse          = false;   // play this grain backwards
@@ -437,6 +445,47 @@ private:
 	float currentScanRatio_ = 1.0f;  // 2^(scanPercent/100)
 	float smoothedScanRatio_ = 1.0f; // EMA-smoothed scan ratio
 
+	// JIT locks a subtle deterministic modulation per grain launch.
+	struct JitterEngine
+	{
+		float driftPhaseA = 0.0f;
+		float driftPhaseB = 0.0f;
+		float driftRateHzA = 0.0f;
+		float driftRateHzB = 0.0f;
+		float shCurr = 0.0f;
+		float shNext = 0.0f;
+		float shPhase = 0.0f;
+		juce::Random rng;
+	};
+
+	struct JitterLaunchValues
+	{
+		float sourceLenSamples = 0.0f;
+		int anchorOffsetSamples = 0;
+		float pitchScale = 1.0f;
+		float readBendDepthSamples = 0.0f;
+		float readBendPhase = 0.0f;
+		float readBendPhaseStep = 0.0f;
+	};
+
+	JitterEngine jitterSource_[2];
+	JitterEngine jitterAnchor_[2];
+	JitterEngine jitterPitch_[2];
+	JitterEngine jitterReadBend_[2];
+	JitterEngine jitterRapid_[2];
+	float jitterSourceOut_[2] = {};
+	float jitterAnchorOut_[2] = {};
+	float jitterPitchOut_[2] = {};
+	float jitterReadBendOut_[2] = {};
+	float jitterRapidOut_[2] = {};
+	float jitterSmoothed_ = kJitterDefault;
+	float jitterSmoothStep_ = 0.001f;
+	void resetJitterEngines() noexcept;
+	float advanceJitterEngine (JitterEngine& engine, float fastRateHz, float fastBlend,
+	                           float maxFastRateHz = 32.0f, float maxBlend = 0.35f) noexcept;
+	void advanceJitterEngines (float amount) noexcept;
+	JitterLaunchValues makeJitterLaunchValues (int ch, int mode, float sourceLenSamples) const noexcept;
+
 	// Per-sample EMA-smoothed parameters ---------------------------
 	float smoothedInputGain   = 1.0f;
 	float smoothedOutputGain  = 1.0f;
@@ -581,6 +630,7 @@ private:
 	std::atomic<float>* modParam      = nullptr;
 	std::atomic<float>* pitchParam    = nullptr;
 	std::atomic<float>* scanParam     = nullptr;
+	std::atomic<float>* jitterParam   = nullptr;
 	std::atomic<float>* smoothParam   = nullptr;
 	std::atomic<float>* modeParam     = nullptr;
 	std::atomic<float>* inputParam    = nullptr;
@@ -908,7 +958,9 @@ private:
 	// Grain helpers -----------------------------------------------
 	void launchNewGrain (int ch, float grainLenSamples, float sourceLenSamples, bool reverseGrain,
 	                     bool backNForthGrain = false, int anchorOffsetSamples = 0,
-	                     float backNForthLegLenSamples = 0.0f);
+	                     float backNForthLegLenSamples = 0.0f, float pitchRatioScale = 1.0f,
+	                     float readBendDepthSamples = 0.0f, float readBendPhase = 0.0f,
+	                     float readBendPhaseStep = 0.0f);
 	float readGrainInterpolated (const GrainVoice& v, int ch) const;
 	float grainEnvelope (const GrainVoice& v) const;
 	void resetGranularSchedulersForDeterministicStart (bool reverseEnabled) noexcept;

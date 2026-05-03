@@ -3,7 +3,7 @@
 <br/><br/>
 
 GRA-TR is a granular audio effect built for texture generation, spectral manipulation, and time-frozen soundscapes.
-It captures audio into a circular buffer and replays it as overlapping grains with independent pitch, scan, smoothness, and time control, driven by MIDI notes, auto-trigger, or manual trigger.
+It captures audio into a circular buffer and replays it as overlapping grains with independent pitch, scan, jitter, smoothness, and time control, driven by MIDI notes, auto-trigger, or manual trigger.
 
 ## Concept
 
@@ -31,6 +31,7 @@ The value column to the right of each slider shows the current state in context:
 - MOD shows the frequency multiplier.
 - PITCH shows semitones with +/- sign and two decimal places.
 - SCAN shows percentage with +/- sign and two decimal places.
+- JIT shows jitter amount as a percentage.
 - SMOOTH shows percentage.
 - STYLE shows MONO/STEREO/WIDE/DUAL.
 - INPUT/OUTPUT show dB values.
@@ -66,6 +67,14 @@ Source-span control. Scales the captured window independently from read rate.
 +100% = captures half the source span.
 -100% = captures double the source span.
 SCAN and PITCH are independent controls: PITCH changes read speed, while SCAN changes the captured source span.
+
+### JIT (0-100%)
+
+Granular jitter engine. Adds deterministic, grain-locked micro-variation to source span, anchor position, pitch, and high-range read motion.
+
+Low and medium values behave like subtle mechanical drift. High values add faster, more unstable motion while preserving the main TIME/SYNC/AUTO scheduler and BNF timing.
+
+At 0%, JIT is neutral and does not alter grain launch values.
 
 ### SMOOTH (0-100%)
 

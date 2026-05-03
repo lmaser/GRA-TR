@@ -105,6 +105,10 @@ private:
                 return juce::String (rounded2, 2);
             }
 
+            // For JIT (0-1 range -> percent)
+            if (owner != nullptr && this == &owner->jitterSlider)
+                return juce::String (v * 100.0, 1);
+
             // For mod (0-1 → x0.25 to x4.0 multiplier)
             if (owner != nullptr && this == &owner->smoothSlider)
                 return juce::String ((int) std::lround (v));
@@ -142,6 +146,7 @@ private:
     BarSlider modSlider;
     BarSlider pitchSlider;
     BarSlider scanSlider;
+    BarSlider jitterSlider;
     BarSlider smoothSlider;
     BarSlider modeSlider;
     BarSlider inputSlider;
@@ -181,6 +186,7 @@ private:
     std::unique_ptr<SliderAttachment> modAttachment;
     std::unique_ptr<SliderAttachment> pitchAttachment;
     std::unique_ptr<SliderAttachment> scanAttachment;
+    std::unique_ptr<SliderAttachment> jitterAttachment;
     std::unique_ptr<SliderAttachment> smoothAttachment;
     std::unique_ptr<SliderAttachment> modeAttachment;
     std::unique_ptr<SliderAttachment> inputAttachment;
@@ -443,6 +449,9 @@ private:
     juce::String getScanText() const;
     juce::String getScanTextShort() const;
 
+    juce::String getJitterText() const;
+    juce::String getJitterTextShort() const;
+
     juce::String getSmoothText() const;
     juce::String getSmoothTextShort() const;
 
@@ -509,6 +518,8 @@ private:
     juce::String cachedPitchTextShort;
     juce::String cachedScanTextFull;
     juce::String cachedScanTextShort;
+    juce::String cachedJitterTextFull;
+    juce::String cachedJitterTextShort;
     juce::String cachedSmoothTextFull;
     juce::String cachedSmoothTextShort;
     juce::String cachedModeTextFull;
@@ -530,6 +541,7 @@ private:
     juce::String cachedTimeIntOnly;
     juce::String cachedPitchIntOnly;
     juce::String cachedScanIntOnly;
+    juce::String cachedJitterIntOnly;
     juce::String cachedSmoothIntOnly;
     juce::String cachedModeIntOnly;
     juce::String cachedModIntOnly;
@@ -552,7 +564,7 @@ private:
 
     HorizontalLayoutMetrics cachedHLayout_;
     VerticalLayoutMetrics cachedVLayout_;
-    std::array<juce::Rectangle<int>, 11> cachedValueAreas_;
+    std::array<juce::Rectangle<int>, 12> cachedValueAreas_;
     juce::Rectangle<int> cachedFilterValueArea_;
     juce::Rectangle<int> cachedPanValueArea_;
     juce::Rectangle<int> cachedLimThresholdValueArea_;
@@ -562,6 +574,7 @@ private:
     bool ioSectionExpanded_ = false;
 
     static constexpr double kDefaultTimeMs = (double) GRATRAudioProcessor::kTimeMsDefault;
+    static constexpr double kDefaultJitter = (double) GRATRAudioProcessor::kJitterDefault;
     static constexpr double kDefaultSmooth = (double) GRATRAudioProcessor::kSmoothDefault;
     static constexpr double kDefaultMix = (double) GRATRAudioProcessor::kMixDefault;
     static constexpr double kDefaultInput = (double) GRATRAudioProcessor::kInputDefault;

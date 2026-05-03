@@ -724,7 +724,7 @@ void GRATRAudioProcessorEditor::DualMixBarComponent::mouseMove (const juce::Mous
 GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
 : AudioProcessorEditor (&p), audioProcessor (p)
 {
-    const std::array<BarSlider*, 12> barSliders { &timeSlider, &modSlider, &pitchSlider, &scanSlider, &smoothSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider, &limThresholdSlider };
+    const std::array<BarSlider*, 13> barSliders { &timeSlider, &modSlider, &pitchSlider, &scanSlider, &jitterSlider, &smoothSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider, &limThresholdSlider };
 
     useCustomPalette = audioProcessor.getUiUseCustomPalette();
     crtEnabled = audioProcessor.getUiCrtEnabled();
@@ -777,6 +777,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     modSlider.setNumDecimalPlacesToDisplay (2);
     pitchSlider.setNumDecimalPlacesToDisplay (2);
     scanSlider.setNumDecimalPlacesToDisplay (2);
+    jitterSlider.setNumDecimalPlacesToDisplay (1);
     smoothSlider.setNumDecimalPlacesToDisplay (0);
     modeSlider.setNumDecimalPlacesToDisplay (0);
     inputSlider.setNumDecimalPlacesToDisplay (1);
@@ -886,6 +887,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     bindSlider (modAttachment, GRATRAudioProcessor::kParamMod, modSlider, (double) GRATRAudioProcessor::kModDefault);
     bindSlider (pitchAttachment, GRATRAudioProcessor::kParamPitch, pitchSlider, (double) GRATRAudioProcessor::kPitchDefault);
     bindSlider (scanAttachment, GRATRAudioProcessor::kParamScan, scanSlider, (double) GRATRAudioProcessor::kScanDefault);
+    bindSlider (jitterAttachment, GRATRAudioProcessor::kParamJitter, jitterSlider, kDefaultJitter);
     bindSlider (smoothAttachment, GRATRAudioProcessor::kParamSmooth, smoothSlider, kDefaultSmooth);
     bindSlider (modeAttachment, GRATRAudioProcessor::kParamMode, modeSlider, 0.0);
     bindSlider (inputAttachment, GRATRAudioProcessor::kParamInput, inputSlider, kDefaultInput);
@@ -1044,7 +1046,7 @@ GRATRAudioProcessorEditor::~GRATRAudioProcessorEditor()
     dismissEditorOwnedModalPrompts (lnf);
     setPromptOverlayActive (false);
 
-    const std::array<BarSlider*, 12> barSliders { &timeSlider, &modSlider, &pitchSlider, &scanSlider, &smoothSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider, &limThresholdSlider };
+    const std::array<BarSlider*, 13> barSliders { &timeSlider, &modSlider, &pitchSlider, &scanSlider, &jitterSlider, &smoothSlider, &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &panSlider, &mixSlider, &limThresholdSlider };
     for (auto* slider : barSliders)
         slider->removeListener (this);
 
@@ -1105,7 +1107,7 @@ void GRATRAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
     auto isBarSlider = [&] (const juce::Slider* s)
     {
         return s == &timeSlider || s == &pitchSlider || s == &modeSlider || s == &modSlider
-            || s == &scanSlider || s == &smoothSlider
+            || s == &scanSlider || s == &jitterSlider || s == &smoothSlider
             || s == &inputSlider || s == &outputSlider || s == &mixSlider;
     };
 
@@ -1139,9 +1141,9 @@ void GRATRAudioProcessorEditor::setPromptOverlayActive (bool shouldBeActive)
         promptOverlay.toFront (false);
 
     const bool enableControls = ! shouldBeActive;
-    const std::array<juce::Component*, 15> interactiveControls {
+    const std::array<juce::Component*, 16> interactiveControls {
         &timeSlider, &pitchSlider, &modeSlider, &modSlider, &scanSlider,
-        &smoothSlider, &inputSlider, &outputSlider, &mixSlider,
+        &jitterSlider, &smoothSlider, &inputSlider, &outputSlider, &mixSlider,
         &syncButton, &autoButton, &triggerButton, &reverseButton, &backNForthButton, &midiButton
     };
     for (auto* control : interactiveControls)
@@ -1262,6 +1264,7 @@ void GRATRAudioProcessorEditor::timerCallback()
                                     || pitchSlider.isMouseButtonDown()
                                     || modeSlider.isMouseButtonDown()
                                     || modSlider.isMouseButtonDown()
+                                    || jitterSlider.isMouseButtonDown()
                                     || smoothSlider.isMouseButtonDown()
                                     || inputSlider.isMouseButtonDown()
                                     || outputSlider.isMouseButtonDown()
@@ -1441,6 +1444,8 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
     const auto oldModeShort     = cachedModeTextShort;
     const auto oldScanFull      = cachedScanTextFull;
     const auto oldScanShort     = cachedScanTextShort;
+    const auto oldJitterFull    = cachedJitterTextFull;
+    const auto oldJitterShort   = cachedJitterTextShort;
     const auto oldSmoothFull    = cachedSmoothTextFull;
     const auto oldSmoothShort   = cachedSmoothTextShort;
     const auto oldModFull       = cachedModTextFull;
@@ -1466,6 +1471,8 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
     cachedModeTextShort = getModeTextShort();
     cachedScanTextFull = getScanText();
     cachedScanTextShort = getScanTextShort();
+    cachedJitterTextFull = getJitterText();
+    cachedJitterTextShort = getJitterTextShort();
     cachedSmoothTextFull = getSmoothText();
     cachedSmoothTextShort = getSmoothTextShort();
     cachedModTextFull = getModText();
@@ -1507,6 +1514,7 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
             cachedScanIntOnly = "+" + juce::String (scanPct, 2) + "%";
         else
             cachedScanIntOnly = juce::String (scanPct, 2) + "%";
+        cachedJitterIntOnly = juce::String ((int) std::lround (jitterSlider.getValue() * 100.0)) + "%";
         cachedSmoothIntOnly  = juce::String ((int) std::lround (smoothSlider.getValue())) + "%";
         cachedModeIntOnly    = juce::String ((int) modeSlider.getValue());
         cachedInputIntOnly   = isGainFaderFloor ((float) inputSlider.getValue())
@@ -1571,6 +1579,8 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
                       || oldModeShort     != cachedModeTextShort
                       || oldScanFull      != cachedScanTextFull
                       || oldScanShort     != cachedScanTextShort
+                      || oldJitterFull    != cachedJitterTextFull
+                      || oldJitterShort   != cachedJitterTextShort
                       || oldSmoothFull    != cachedSmoothTextFull
                       || oldSmoothShort   != cachedSmoothTextShort
                       || oldModFull       != cachedModTextFull
@@ -1673,6 +1683,16 @@ juce::String GRATRAudioProcessorEditor::getScanTextShort() const
     const float pct = std::round ((float) scanSlider.getValue() * 100.0f) / 100.0f;
     if (pct > 0.0f) return "+" + juce::String (pct, 2) + "% SCN";
     return juce::String (pct, 2) + "% SCN";
+}
+
+juce::String GRATRAudioProcessorEditor::getJitterText() const
+{
+    return juce::String ((int) std::lround (jitterSlider.getValue() * 100.0)) + "% JIT";
+}
+
+juce::String GRATRAudioProcessorEditor::getJitterTextShort() const
+{
+    return juce::String ((int) std::lround (jitterSlider.getValue() * 100.0)) + "% JIT";
 }
 
 juce::String GRATRAudioProcessorEditor::getSmoothText() const
@@ -1851,6 +1871,10 @@ constexpr const char* kPitchLegendInt   = "+24.00st";
 constexpr const char* kScanLegendFull  = "-100.00% SCAN";
 constexpr const char* kScanLegendShort = "-100.00% SCN";
 constexpr const char* kScanLegendInt   = "-100.00%";
+
+    constexpr const char* kJitterLegendFull  = "100% JIT";
+    constexpr const char* kJitterLegendShort = "100% JIT";
+    constexpr const char* kJitterLegendInt   = "100%";
 
     constexpr const char* kSmoothLegendFull  = "100% SMOOTH";
     constexpr const char* kSmoothLegendShort = "100% SMTH";
@@ -2290,6 +2314,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     }
     else if (&s == &pitchSlider)     { suffix = " ST PITCH";   suffixShort = " ST"; }
     else if (&s == &scanSlider)      { suffix = " % SCAN";     suffixShort = " %"; }
+    else if (&s == &jitterSlider)    { suffix = " % JIT";      suffixShort = " %"; }
     else if (&s == &smoothSlider)    { suffix = " % SMOOTH";   suffixShort = " %"; }
     else if (&s == &modSlider)       { suffix = " X MOD";      suffixShort = " X"; }
     else if (&s == &inputSlider)     { suffix = " DB INPUT";   suffixShort = " DB IN"; }
@@ -2298,7 +2323,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     else if (&s == &panSlider)       { suffix = " % PAN";      suffixShort = " %"; }
     const juce::String suffixText = suffix.trimStart();
     const juce::String suffixTextShort = suffixShort.trimStart();
-    const bool isPercentPrompt = (&s == &mixSlider || &s == &panSlider || &s == &scanSlider);
+    const bool isPercentPrompt = (&s == &mixSlider || &s == &panSlider || &s == &scanSlider || &s == &jitterSlider);
 
     auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
     aw->setLookAndFeel (&lnf);
@@ -2317,6 +2342,10 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     {
         const float pct = std::round ((float) s.getValue() * 100.0f) / 100.0f;
         currentDisplay = (pct > 0.0f) ? ("+" + juce::String (pct, 2)) : juce::String (pct, 2);
+    }
+    else if (&s == &jitterSlider)
+    {
+        currentDisplay = juce::String (s.getValue() * 100.0, 1);
     }
     else if (&s == &smoothSlider)
     {
@@ -2376,6 +2405,8 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             worstCaseText = "+24.00";
         else if (&s == &scanSlider)
             worstCaseText = "-100.00";
+        else if (&s == &jitterSlider)
+            worstCaseText = "100.0";
         else if (&s == &smoothSlider)
             worstCaseText = "100";
         else if (&s == &modSlider)
@@ -2465,6 +2496,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
         }
         else if (&s == &pitchSlider)  { minVal = -24.0; maxVal = 24.0; maxDecs = 2; maxLen = 6; }
         else if (&s == &scanSlider)    { minVal = -100.0; maxVal = 100.0; maxDecs = 2; maxLen = 7; }
+        else if (&s == &jitterSlider) { minVal = 0.0; maxVal = 100.0; maxDecs = 1; maxLen = 5; }
         else if (&s == &smoothSlider) { minVal = 0.0; maxVal = 100.0; maxDecs = 0; maxLen = 3; }
         else if (&s == &modSlider)    { minVal = 0.25;  maxVal = 4.0; maxDecs = 2; maxLen = 4; }
         else if (&s == &inputSlider)  { minVal = GRATRAudioProcessor::kGainFloorDb; maxVal = GRATRAudioProcessor::kGainMaxDb; maxDecs = 1; maxLen = 6; }
@@ -2594,7 +2626,8 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
                 // user typed percent for mix/pan; convert to slider's [0,1]
                 if (safeThis != nullptr && (sliderPtr == &safeThis->mixSlider
-                                         || sliderPtr == &safeThis->panSlider))
+                                         || sliderPtr == &safeThis->panSlider
+                                         || sliderPtr == &safeThis->jitterSlider))
                     v *= 0.01;
 
                 // user typed multiplier for mod; convert to slider's [0,1]
@@ -4028,9 +4061,9 @@ GRATRAudioProcessorEditor::buildVerticalLayout (int editorH, int biasY, bool ioE
     m.availableForSliders = juce::jmax (40, sliderBottomRef - m.betweenSlidersAndButtons - m.topMargin);
 
     // Bars below toggle: 9 IO bars when expanded (IN/OUT/TILT/FILTER/PAN/MIX/LIM/MODE_ROW/INV_ROW),
-    // 6 main bars when collapsed (TIME/MOD/PITCH/SCAN/SMOOTH/STYLE).
-    const int numSliders = ioExpanded ? 9 : 6;
-    const int numGaps    = ioExpanded ? 9 : 6;
+    // 7 main bars when collapsed (TIME/MOD/PITCH/SCAN/JIT/SMOOTH/STYLE).
+    const int numSliders = ioExpanded ? 9 : 7;
+    const int numGaps    = ioExpanded ? 9 : 7;
 
     m.toggleBarH = 20;
     const int spaceForScale = juce::jmax (40, m.availableForSliders - m.toggleBarH);
@@ -4061,22 +4094,22 @@ void GRATRAudioProcessorEditor::updateCachedLayout()
     cachedHLayout_ = buildHorizontalLayout (getWidth(), getTargetValueColumnWidth());
     cachedVLayout_ = buildVerticalLayout (getHeight(), kLayoutVerticalBiasPx, ioSectionExpanded_);
 
-    const juce::Slider* sliders[11] = { &timeSlider, &modSlider, &pitchSlider, &scanSlider, &smoothSlider,
+    const juce::Slider* sliders[12] = { &timeSlider, &modSlider, &pitchSlider, &scanSlider, &jitterSlider, &smoothSlider,
                                         &modeSlider, &inputSlider, &outputSlider, &tiltSlider, &mixSlider, &panSlider };
 
-    for (int i = 0; i < 11; ++i)
+    for (int i = 0; i < 12; ++i)
     {
         if (! sliders[i]->isVisible())
         {
-            // MIX row (index 8): use dualMixBar_ bounds when SEND mode is active
-            if (i == 9 && dualMixBar_.isVisible())
+            // MIX row: use dualMixBar_ bounds when SEND mode is active
+            if (i == 10 && dualMixBar_.isVisible())
             {
                 const auto& bb = dualMixBar_.getBounds();
                 const int valueX = bb.getRight() + cachedHLayout_.valuePad;
                 const int maxW = juce::jmax (0, getWidth() - valueX - kValueAreaRightMarginPx);
                 const int vw   = juce::jmin (cachedHLayout_.valueW, maxW);
                 const int y    = bb.getCentreY() - (kValueAreaHeightPx / 2);
-                cachedValueAreas_[9] = { valueX, y, juce::jmax (0, vw), kValueAreaHeightPx };
+                cachedValueAreas_[10] = { valueX, y, juce::jmax (0, vw), kValueAreaHeightPx };
                 continue;
             }
             cachedValueAreas_[(size_t) i] = {};
@@ -4188,6 +4221,10 @@ int GRATRAudioProcessorEditor::getTargetValueColumnWidth() const
                                      juce::jmax (stringWidth (font, kScanLegendShort),
                                                  stringWidth (font, kScanLegendInt)));
 
+    const int jitterMaxW = juce::jmax (stringWidth (font, kJitterLegendFull),
+                                       juce::jmax (stringWidth (font, kJitterLegendShort),
+                                                   stringWidth (font, kJitterLegendInt)));
+
     const int smoothMaxW = juce::jmax (stringWidth (font, kSmoothLegendFull),
                                        juce::jmax (stringWidth (font, kSmoothLegendShort),
                                                    stringWidth (font, kSmoothLegendInt)));
@@ -4213,7 +4250,7 @@ int GRATRAudioProcessorEditor::getTargetValueColumnWidth() const
                                                 stringWidth (font, kLimLegendInt)));
 
     const int maxW = juce::jmax (juce::jmax (juce::jmax (timeMaxW, pitchMaxW), juce::jmax (modeMaxW, modMaxW)),
-                                 juce::jmax (juce::jmax (inputMaxW, outputMaxW), juce::jmax (mixMaxW, juce::jmax (scanMaxW, limMaxW))));
+                                 juce::jmax (juce::jmax (inputMaxW, outputMaxW), juce::jmax (mixMaxW, juce::jmax (scanMaxW, juce::jmax (jitterMaxW, limMaxW)))));
     const int maxWithSmooth = juce::jmax (maxW, smoothMaxW);
 
     const int desired = maxWithSmooth + 16;
@@ -4241,11 +4278,13 @@ juce::Slider* GRATRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point
     if (cachedValueAreas_[0].contains (p))  return &timeSlider;
     if (cachedValueAreas_[1].contains (p))  return &modSlider;
     if (cachedValueAreas_[2].contains (p))  return &pitchSlider;
-    if (cachedValueAreas_[4].contains (p))  return &smoothSlider;
-    if (cachedValueAreas_[5].contains (p))  return &modeSlider;
-    if (cachedValueAreas_[6].contains (p))  return &inputSlider;
-    if (cachedValueAreas_[7].contains (p))  return &outputSlider;
-    if (cachedValueAreas_[9].contains (p))  return &mixSlider;
+    if (cachedValueAreas_[3].contains (p))  return &scanSlider;
+    if (cachedValueAreas_[4].contains (p))  return &jitterSlider;
+    if (cachedValueAreas_[5].contains (p))  return &smoothSlider;
+    if (cachedValueAreas_[6].contains (p))  return &modeSlider;
+    if (cachedValueAreas_[7].contains (p))  return &inputSlider;
+    if (cachedValueAreas_[8].contains (p))  return &outputSlider;
+    if (cachedValueAreas_[10].contains (p)) return &mixSlider;
 
     return nullptr;
 }
@@ -4476,6 +4515,8 @@ void GRATRAudioProcessorEditor::mouseDoubleClick (const juce::MouseEvent& e)
     {
         if (slider == &timeSlider)          slider->setValue (kDefaultTimeMs, juce::sendNotificationSync);
         else if (slider == &pitchSlider)    slider->setValue (0.0, juce::sendNotificationSync);
+        else if (slider == &scanSlider)     slider->setValue ((double) GRATRAudioProcessor::kScanDefault, juce::sendNotificationSync);
+        else if (slider == &jitterSlider)   slider->setValue (kDefaultJitter, juce::sendNotificationSync);
         else if (slider == &smoothSlider)   slider->setValue (kDefaultSmooth, juce::sendNotificationSync);
         else if (slider == &modeSlider)     slider->setValue (0.0, juce::sendNotificationSync);
         else if (slider == &modSlider)      slider->setValue (0.5, juce::sendNotificationSync);
@@ -4648,19 +4689,20 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (scheme.text);
 
     {
-        const juce::String* fullTexts[11]  = { &cachedTimeTextFull, &cachedModTextFull, &cachedPitchTextFull,
-                                               &cachedScanTextFull, &cachedSmoothTextFull, &cachedModeTextFull,
-                                               &cachedInputTextFull, &cachedOutputTextFull, &cachedTiltTextFull,
-                                               &cachedMixTextFull, &cachedPanTextFull };
-        const juce::String* shortTexts[11] = { &cachedTimeTextShort, &cachedModTextShort, &cachedPitchTextShort,
-                                               &cachedScanTextShort, &cachedSmoothTextShort, &cachedModeTextShort,
-                                               &cachedInputTextShort, &cachedOutputTextShort, &cachedTiltTextShort,
-                                               &cachedMixTextShort, &cachedPanTextShort };
-        const juce::String* intTexts[11] = {
+        const juce::String* fullTexts[12]  = { &cachedTimeTextFull, &cachedModTextFull, &cachedPitchTextFull,
+                                               &cachedScanTextFull, &cachedJitterTextFull, &cachedSmoothTextFull,
+                                               &cachedModeTextFull, &cachedInputTextFull, &cachedOutputTextFull,
+                                               &cachedTiltTextFull, &cachedMixTextFull, &cachedPanTextFull };
+        const juce::String* shortTexts[12] = { &cachedTimeTextShort, &cachedModTextShort, &cachedPitchTextShort,
+                                               &cachedScanTextShort, &cachedJitterTextShort, &cachedSmoothTextShort,
+                                               &cachedModeTextShort, &cachedInputTextShort, &cachedOutputTextShort,
+                                               &cachedTiltTextShort, &cachedMixTextShort, &cachedPanTextShort };
+        const juce::String* intTexts[12] = {
             &cachedTimeIntOnly,
             &cachedModIntOnly,
             &cachedPitchIntOnly,
             &cachedScanIntOnly,
+            &cachedJitterIntOnly,
             &cachedSmoothIntOnly,
             &cachedModeIntOnly,
             &cachedInputIntOnly,
@@ -4670,7 +4712,7 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
             &cachedPanIntOnly
         };
 
-        for (int i = 0; i < 11; ++i)
+        for (int i = 0; i < 12; ++i)
             drawLegendForMode (cachedValueAreas_[(size_t) i], *fullTexts[i], *shortTexts[i], *intTexts[i]);
 
         if (tiltSlider.isVisible() && cachedTiltValueArea_.getWidth() > 0)
@@ -4966,6 +5008,7 @@ void GRATRAudioProcessorEditor::resized()
         modSlider.setBounds (0, 0, 0, 0);
         pitchSlider.setBounds (0, 0, 0, 0);
         scanSlider.setBounds (0, 0, 0, 0);
+        jitterSlider.setBounds (0, 0, 0, 0);
         smoothSlider.setBounds (0, 0, 0, 0);
         modeSlider.setBounds (0, 0, 0, 0);
 
@@ -4973,6 +5016,7 @@ void GRATRAudioProcessorEditor::resized()
         modSlider.setVisible (false);
         pitchSlider.setVisible (false);
         scanSlider.setVisible (false);
+        jitterSlider.setVisible (false);
         smoothSlider.setVisible (false);
         modeSlider.setVisible (false);
     }
@@ -4983,13 +5027,15 @@ void GRATRAudioProcessorEditor::resized()
         modSlider.setBounds      (horizontalLayout.leftX, mainTop + 1 * step, horizontalLayout.barW, verticalLayout.barH);
         pitchSlider.setBounds    (horizontalLayout.leftX, mainTop + 2 * step, horizontalLayout.barW, verticalLayout.barH);
         scanSlider.setBounds     (horizontalLayout.leftX, mainTop + 3 * step, horizontalLayout.barW, verticalLayout.barH);
-        smoothSlider.setBounds   (horizontalLayout.leftX, mainTop + 4 * step, horizontalLayout.barW, verticalLayout.barH);
-        modeSlider.setBounds     (horizontalLayout.leftX, mainTop + 5 * step, horizontalLayout.barW, verticalLayout.barH);
+        jitterSlider.setBounds   (horizontalLayout.leftX, mainTop + 4 * step, horizontalLayout.barW, verticalLayout.barH);
+        smoothSlider.setBounds   (horizontalLayout.leftX, mainTop + 5 * step, horizontalLayout.barW, verticalLayout.barH);
+        modeSlider.setBounds     (horizontalLayout.leftX, mainTop + 6 * step, horizontalLayout.barW, verticalLayout.barH);
 
         timeSlider.setVisible (true);
         modSlider.setVisible (true);
         pitchSlider.setVisible (true);
         scanSlider.setVisible (true);
+        jitterSlider.setVisible (true);
         smoothSlider.setVisible (true);
         modeSlider.setVisible (true);
 
