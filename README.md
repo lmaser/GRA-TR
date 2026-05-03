@@ -210,6 +210,7 @@ RVS controls the starting direction: with RVS off, BNF starts forward then rever
 For manual TIME and SYNC modes, BNF treats the current TIME/SYNC + MOD period as the event length, then divides long events into internal ping-pong cells up to 1/8-note long. Each cell is split into two equal legs: starting direction first, opposite direction second. If a setting produces eight grain events, BNF still produces eight events; each one contains its own forward+reverse or reverse+forward motion.
 
 SCAN still scales the captured source window, and that window is divided across the internal BNF cells so BNF remains rhythmically consistent while retaining scan control.
+BNF also keeps its internal cell boundaries crossfaded and pitch-aware, so high positive or negative pitch settings stay continuous without changing the musical event timing.
 
 ### CHAOS
 
@@ -264,7 +265,7 @@ Modes:
 - **Pitch**: Read rate = `2^(semitones/12)`. Grains advance by pitch ratio each sample.
 - **Scan**: Capture length = `effectiveGrainLen / 2^(scanPercent/100)`. Scales the captured source span independently from pitch.
 - **Reverse**: Read position always advances forward; reverse mapping (`grainLen - 1 - readPos`) is applied in the read function so reverse playback starts on the last valid sample inside the captured grain.
-- **Back N Forth**: Direction turns inside each grain event. RVS seeds the initial direction. Long BNF events are subdivided into internal ping-pong cells with a 1/8-note maximum cell length, while SCAN still scales the captured source window used by those cells.
+- **Back N Forth**: Direction turns inside each grain event. RVS seeds the initial direction. Long BNF events are subdivided into internal ping-pong cells with a 1/8-note maximum cell length, while SCAN still scales the captured source window used by those cells. Internal BNF cell boundaries are crossfaded, and the captured source span remains pitch-aware to avoid discontinuities at extreme pitch settings.
 - **Smoothing**: One-pole EMA per sample for gain, mix, SEND dry/wet, pan, limiter threshold, pitch ratio, scan ratio, and the default manual grain-length path. MIDI grain-length changes use a velocity-dependent glide. Large TIME/MOD/SYNC size transitions apply a temporary minimum grain taper and slower grain-length glide to avoid discontinuities without changing steady-state playback.
 - **Wet filter**: Biquad HP/LP on the wet signal. Transposed Direct Form II. Coefficients updated once per block.
 - **Tilt EQ**: First-order symmetric shelf at 1 kHz. Coefficients cached with tolerance-based update.
@@ -286,6 +287,7 @@ Modes:
 - Replaced the old ENV GRA workflow with the main-panel SMOOTH control for grain taper/crossfade shaping in both forward and reverse playback.
 - PITCH and SCAN now support two-decimal precision in the GUI and numeric prompt; SCAN is processed internally with 0.001% parameter resolution.
 - Added BNF (Back N Forth) mode for deterministic forward/reverse alternation.
+- Improved BNF continuity across wide pitch ranges with pitch-aware source spans and internal cell-boundary smoothing.
 - SMOOTH now defaults to 25% for safer click-free startup behavior.
 - Improved deterministic DAW loop/replay behavior for AUTO + SYNC using host transport/PPQ alignment.
 - Grain taper is now locked per launched grain, so SMOOTH automation does not reshape active grains mid-playback.
