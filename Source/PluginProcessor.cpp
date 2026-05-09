@@ -73,6 +73,49 @@ namespace
 		                                       GRATRAudioProcessor::kGainSkew);
 	}
 
+	struct TimeSyncDivision
+	{
+		const char* label;
+		float quarterNotes;
+	};
+
+	constexpr TimeSyncDivision kTimeSyncDivisions[] =
+	{
+		{ "1/64T", 1.0f / 24.0f },
+		{ "1/64",  1.0f / 16.0f },
+		{ "1/32T", 1.0f / 12.0f },
+		{ "1/64.", 3.0f / 32.0f },
+		{ "1/32",  1.0f / 8.0f },
+		{ "1/16T", 1.0f / 6.0f },
+		{ "1/32.", 3.0f / 16.0f },
+		{ "1/16",  1.0f / 4.0f },
+		{ "1/8T",  1.0f / 3.0f },
+		{ "1/16.", 3.0f / 8.0f },
+		{ "1/8",   1.0f / 2.0f },
+		{ "1/4T",  2.0f / 3.0f },
+		{ "1/8.",  3.0f / 4.0f },
+		{ "1/4",   1.0f },
+		{ "1/2T",  4.0f / 3.0f },
+		{ "1/4.",  3.0f / 2.0f },
+		{ "1/2",   2.0f },
+		{ "1/1T",  8.0f / 3.0f },
+		{ "1/2.",  3.0f },
+		{ "1/1",   4.0f },
+		{ "2/1T", 16.0f / 3.0f },
+		{ "1/1.",  6.0f },
+		{ "2/1",   8.0f },
+		{ "4/1T", 32.0f / 3.0f },
+		{ "2/1.", 12.0f },
+		{ "4/1",  16.0f },
+		{ "8/1T", 64.0f / 3.0f },
+		{ "4/1.", 24.0f },
+		{ "8/1",  32.0f }
+	};
+
+	constexpr int kNumTimeSyncDivisions = (int) (sizeof (kTimeSyncDivisions) / sizeof (kTimeSyncDivisions[0]));
+	static_assert (kNumTimeSyncDivisions == GRATRAudioProcessor::kTimeSyncMax + 1,
+	               "Time sync table must match kTimeSyncMax.");
+
 	// Precomputed Tukey taper for grain envelope -------------------
 	constexpr int kTaperTableSize = 129;
 	struct TaperTable
@@ -2161,48 +2204,30 @@ void GRATRAudioProcessor::setCurrentProgramStateInformation (const void* data, i
 }
 
 //==============================================================================
-// Tempo sync (identical to ECHO-TR)
+// Tempo sync divisions ordered by real duration.
 
 juce::StringArray GRATRAudioProcessor::getTimeSyncChoices()
 {
-	return {
-		"1/64T", "1/64", "1/64.",
-		"1/32T", "1/32", "1/32.",
-		"1/16T", "1/16", "1/16.",
-		"1/8T",  "1/8",  "1/8.",
-		"1/4T",  "1/4",  "1/4.",
-		"1/2T",  "1/2",  "1/2.",
-		"1/1T",  "1/1",  "1/1.",
-		"2/1T",  "2/1",  "2/1.",
-		"4/1T",  "4/1",  "4/1.",
-		"8/1T",  "8/1",  "8/1."
-	};
+	juce::StringArray choices;
+	for (const auto& division : kTimeSyncDivisions)
+		choices.add (division.label);
+	return choices;
 }
 
 juce::String GRATRAudioProcessor::getTimeSyncName (int index)
 {
-	auto choices = getTimeSyncChoices();
-	if (index >= 0 && index < choices.size())
-		return choices[index];
+	if (index >= 0 && index < kNumTimeSyncDivisions)
+		return kTimeSyncDivisions[index].label;
 	return "1/8";
 }
 
 float GRATRAudioProcessor::tempoSyncToMs (int syncIndex, double bpm) const
 {
 	if (bpm <= 0.0) bpm = 120.0;
-	syncIndex = juce::jlimit (0, 29, syncIndex);
-
-	const float divisions[] = { 64.0f, 32.0f, 16.0f, 8.0f, 4.0f, 2.0f, 1.0f, 0.5f, 0.25f, 0.125f };
-	const int baseIndex = syncIndex / 3;
-	const int modifier  = syncIndex % 3;
+	syncIndex = juce::jlimit (0, kNumTimeSyncDivisions - 1, syncIndex);
 
 	const float quarterNoteMs = (float) (60000.0 / bpm);
-	float durationMs = quarterNoteMs * (4.0f / divisions[baseIndex]);
-
-	if (modifier == 0) durationMs *= (2.0f / 3.0f);
-	else if (modifier == 2) durationMs *= 1.5f;
-
-	return durationMs;
+	return quarterNoteMs * kTimeSyncDivisions[syncIndex].quarterNotes;
 }
 
 //==============================================================================

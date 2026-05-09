@@ -71,6 +71,15 @@ static juce::String formatMidiChannelTooltip (int ch)
 }
 
 // ── Parameter listener IDs (shared by ctor + dtor) ──
+static juce::String formatChaosTooltip (float amountPercent, float speedHz)
+{
+    return "AMT " + juce::String (juce::roundToInt (juce::jlimit (0.0f, 100.0f, amountPercent))) + "%"
+         + " | SPD " + juce::String (juce::jlimit (GRATRAudioProcessor::kChaosSpdMin,
+                                                   GRATRAudioProcessor::kChaosSpdMax,
+                                                   speedHz), 1)
+         + " Hz";
+}
+
 static constexpr std::array<const char*, 5> kUiMirrorParamIds {
     GRATRAudioProcessor::kParamSync,
     GRATRAudioProcessor::kParamUiPalette,
@@ -277,7 +286,7 @@ void GRATRAudioProcessorEditor::MinimalLNF::drawPopupMenuBackground (
 
 juce::Font GRATRAudioProcessorEditor::MinimalLNF::getComboBoxFont (juce::ComboBox& box)
 {
-    const float h = juce::jlimit (10.0f, 18.0f, box.getHeight() * 0.55f);
+    const float h = juce::jlimit (12.0f, 24.0f, box.getHeight() * 0.59f);
     return juce::Font (juce::FontOptions (h).withStyle ("Bold"));
 }
 
@@ -813,7 +822,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
         chaosFilterDisplay.setText ("", juce::dontSendNotification);
         chaosFilterDisplay.setInterceptsMouseClicks (true, false);
         chaosFilterDisplay.addMouseListener (this, false);
-        chaosFilterDisplay.setTooltip (juce::String (juce::roundToInt (savedAmtF)) + "% | " + juce::String (juce::roundToInt (savedSpdF)) + " Hz");
+        chaosFilterDisplay.setTooltip (formatChaosTooltip (savedAmtF, savedSpdF));
         chaosFilterDisplay.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         chaosFilterDisplay.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
         chaosFilterDisplay.setOpaque (false);
@@ -831,7 +840,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
         chaosDelayDisplay.setText ("", juce::dontSendNotification);
         chaosDelayDisplay.setInterceptsMouseClicks (true, false);
         chaosDelayDisplay.addMouseListener (this, false);
-        chaosDelayDisplay.setTooltip (juce::String (juce::roundToInt (savedAmtD)) + "% | " + juce::String (juce::roundToInt (savedSpdD)) + " Hz");
+        chaosDelayDisplay.setTooltip (formatChaosTooltip (savedAmtD, savedSpdD));
         chaosDelayDisplay.setColour (juce::Label::backgroundColourId, juce::Colours::transparentBlack);
         chaosDelayDisplay.setColour (juce::Label::outlineColourId, juce::Colours::transparentBlack);
         chaosDelayDisplay.setOpaque (false);
@@ -877,7 +886,9 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     if (syncEnabled)
     {
         bindSlider (timeSyncAttachment, GRATRAudioProcessor::kParamTimeSync, timeSlider, (double) GRATRAudioProcessor::kTimeSyncDefault);
-        timeSlider.setRange (0.0, 29.0, 1.0);
+        timeSlider.setRange ((double) GRATRAudioProcessor::kTimeSyncMin,
+                             (double) GRATRAudioProcessor::kTimeSyncMax,
+                             1.0);
     }
     else
     {
@@ -981,9 +992,9 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
         filterPosAttachment = std::make_unique<ComboBoxAttachment> (audioProcessor.apvts, GRATRAudioProcessor::kParamFilterPos, filterPosCombo);
     }
 
-    // Disable numeric popup for STYLE (slider-only operation)
+    // STYLE is a discrete/model control; the rest keep numeric prompts.
     modeSlider.setAllowNumericPopup (false);
-    limThresholdSlider.setAllowNumericPopup (false);
+    limThresholdSlider.setAllowNumericPopup (true);
 
     auto bindButton = [&] (std::unique_ptr<ButtonAttachment>& attachment,
                            const char* paramId,
@@ -1394,7 +1405,7 @@ void GRATRAudioProcessorEditor::updateTimeSliderForSyncMode (bool syncEnabled)
         int bestSyncIndex = GRATRAudioProcessor::kTimeSyncDefault;
         float bestDiff = std::abs (currentMs - audioProcessor.tempoSyncToMs (bestSyncIndex, bpm));
         
-        for (int i = 0; i < 30; ++i)
+        for (int i = GRATRAudioProcessor::kTimeSyncMin; i <= GRATRAudioProcessor::kTimeSyncMax; ++i)
         {
             const float syncMs = audioProcessor.tempoSyncToMs (i, bpm);
             const float diff = std::abs (currentMs - syncMs);
@@ -1409,7 +1420,9 @@ void GRATRAudioProcessorEditor::updateTimeSliderForSyncMode (bool syncEnabled)
         timeSyncAttachment = std::make_unique<SliderAttachment> (audioProcessor.apvts, 
                                                                   GRATRAudioProcessor::kParamTimeSync, 
                                                                   timeSlider);
-        timeSlider.setRange (0.0, 29.0, 1.0);
+        timeSlider.setRange ((double) GRATRAudioProcessor::kTimeSyncMin,
+                             (double) GRATRAudioProcessor::kTimeSyncMax,
+                             1.0);
         timeSlider.setDoubleClickReturnValue (true, (double) GRATRAudioProcessor::kTimeSyncDefault);
         
         if (auto* param = audioProcessor.apvts.getParameter (GRATRAudioProcessor::kParamTimeSync))
@@ -1541,7 +1554,7 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
         if (std::abs (tiltVal) < 0.05f)
             cachedTiltIntOnly = "0dB";
         else
-            cachedTiltIntOnly = juce::String ((int) tiltVal) + "dB";
+            cachedTiltIntOnly = juce::String (tiltVal, 1) + "dB";
     }
 
     cachedFilterTextFull  = "FILTER";
@@ -1555,9 +1568,9 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
     {
         const float limVal = (float) limThresholdSlider.getValue();
         if (std::abs (limVal) < 0.05f)
-            cachedLimThresholdIntOnly = "0dB";
+            cachedLimThresholdIntOnly = "0.0dB";
         else
-            cachedLimThresholdIntOnly = juce::String ((int) limVal) + "dB";
+            cachedLimThresholdIntOnly = juce::String (limVal, 1) + "dB";
     }
 
     {
@@ -1841,7 +1854,7 @@ juce::String GRATRAudioProcessorEditor::getLimThresholdText() const
 {
     const float db = (float) limThresholdSlider.getValue();
     if (std::abs (db) < 0.05f)
-        return "0 dB LIMIT";
+        return "0.0 dB LIMIT";
     return juce::String (db, 1) + " dB LIMIT";
 }
 
@@ -1849,7 +1862,7 @@ juce::String GRATRAudioProcessorEditor::getLimThresholdTextShort() const
 {
     const float db = (float) limThresholdSlider.getValue();
     if (std::abs (db) < 0.05f)
-        return "0 dB LIM";
+        return "0.0 dB LIM";
     return juce::String (db, 1) + " dB LIM";
 }
 
@@ -1898,7 +1911,7 @@ constexpr const char* kScanLegendInt   = "-100.00%";
 
     constexpr const char* kLimLegendFull   = "-36.0 dB LIMIT";
     constexpr const char* kLimLegendShort  = "-36.0 dB LIM";
-    constexpr const char* kLimLegendInt    = "-36dB";
+    constexpr const char* kLimLegendInt    = "-36.0dB";
 
     constexpr int kValueAreaHeightPx = 44;
     constexpr int kValueAreaRightMarginPx = 24;
@@ -2319,8 +2332,10 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     else if (&s == &modSlider)       { suffix = " X MOD";      suffixShort = " X"; }
     else if (&s == &inputSlider)     { suffix = " DB INPUT";   suffixShort = " DB IN"; }
     else if (&s == &outputSlider)    { suffix = " DB OUTPUT";  suffixShort = " DB OUT"; }
+    else if (&s == &tiltSlider)      { suffix = " DB TILT";    suffixShort = " DB TILT"; }
     else if (&s == &mixSlider)       { suffix = " % MIX";      suffixShort = " % MIX"; }
     else if (&s == &panSlider)       { suffix = " % PAN";      suffixShort = " %"; }
+    else if (&s == &limThresholdSlider) { suffix = " DB LIM";  suffixShort = " DB LIM"; }
     const juce::String suffixText = suffix.trimStart();
     const juce::String suffixTextShort = suffixShort.trimStart();
     const bool isPercentPrompt = (&s == &mixSlider || &s == &panSlider || &s == &scanSlider || &s == &jitterSlider);
@@ -2415,10 +2430,14 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             worstCaseText = "-144.0";
         else if (&s == &outputSlider)
             worstCaseText = "-144.0";
+        else if (&s == &tiltSlider)
+            worstCaseText = "-6.0";
         else if (&s == &mixSlider)
             worstCaseText = "100.00";
         else if (&s == &panSlider)
             worstCaseText = "100";
+        else if (&s == &limThresholdSlider)
+            worstCaseText = "-36.0";
         else
             worstCaseText = "999.99";
 
@@ -2491,7 +2510,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
         if (&s == &timeSlider)
         {
-            if (isTimeSyncMode) { minVal = 0.0; maxVal = 29.0; maxDecs = 0; maxLen = 6; }
+            if (isTimeSyncMode) { minVal = (double) GRATRAudioProcessor::kTimeSyncMin; maxVal = (double) GRATRAudioProcessor::kTimeSyncMax; maxDecs = 0; maxLen = 6; }
             else                { minVal = 0.0; maxVal = 10000.0; maxDecs = 3; maxLen = 9; }
         }
         else if (&s == &pitchSlider)  { minVal = -24.0; maxVal = 24.0; maxDecs = 2; maxLen = 6; }
@@ -2501,8 +2520,10 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
         else if (&s == &modSlider)    { minVal = 0.25;  maxVal = 4.0; maxDecs = 2; maxLen = 4; }
         else if (&s == &inputSlider)  { minVal = GRATRAudioProcessor::kGainFloorDb; maxVal = GRATRAudioProcessor::kGainMaxDb; maxDecs = 1; maxLen = 6; }
         else if (&s == &outputSlider) { minVal = GRATRAudioProcessor::kGainFloorDb; maxVal = GRATRAudioProcessor::kGainMaxDb; maxDecs = 1; maxLen = 6; }
+        else if (&s == &tiltSlider)   { minVal = GRATRAudioProcessor::kTiltMin; maxVal = GRATRAudioProcessor::kTiltMax; maxDecs = 1; maxLen = 4; }
         else if (&s == &mixSlider)    { minVal = 0.0; maxVal = 100.0; maxDecs = 1; maxLen = 5; }
         else if (&s == &panSlider)    { minVal = 0.0; maxVal = 100.0; maxDecs = 0; maxLen = 3; }
+        else if (&s == &limThresholdSlider) { minVal = GRATRAudioProcessor::kLimThresholdMin; maxVal = GRATRAudioProcessor::kLimThresholdMax; maxDecs = 1; maxLen = 5; }
 
         if (&s == &timeSlider && isTimeSyncMode)
             te->setInputFilter (new SyncDivisionInputFilter (maxLen), true);
@@ -2611,7 +2632,9 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
                     const juce::String numericToken = t.initialSectionContainingOnly ("0123456789");
                     foundIndex = numericToken.getIntValue();
                 }
-                v = (double) juce::jlimit (0, 29, foundIndex);
+                v = (double) juce::jlimit (GRATRAudioProcessor::kTimeSyncMin,
+                                           GRATRAudioProcessor::kTimeSyncMax,
+                                           foundIndex);
             }
             else
             {
@@ -3669,9 +3692,11 @@ void GRATRAudioProcessorEditor::openChaosConfigPrompt (const char* amtParamId, c
             const float newAmt = juce::jlimit (0.0f, 100.0f, amtBar->value * 100.0f);
             const float newSpd = juce::jlimit (GRATRAudioProcessor::kChaosSpdMin, GRATRAudioProcessor::kChaosSpdMax,
                                                 std::exp (spdLogMin + juce::jlimit (0.0f, 1.0f, spdBar->value) * spdLogRange));
-            auto tip = juce::String (juce::roundToInt (newAmt)) + "% | " + juce::String (juce::roundToInt (newSpd)) + " Hz";
-            safeThis->chaosFilterDisplay.setTooltip (tip);
-            safeThis->chaosDelayDisplay.setTooltip (tip);
+            const auto tip = formatChaosTooltip (newAmt, newSpd);
+            if (juce::String (amtParamId) == GRATRAudioProcessor::kParamChaosAmtFilter)
+                safeThis->chaosFilterDisplay.setTooltip (tip);
+            else
+                safeThis->chaosDelayDisplay.setTooltip (tip);
         }), false);
 }
 
@@ -4060,10 +4085,10 @@ GRATRAudioProcessorEditor::buildVerticalLayout (int editorH, int biasY, bool ioE
     const int sliderBottomRef = ioExpanded ? m.chaosRowY : m.btnRow1Y;
     m.availableForSliders = juce::jmax (40, sliderBottomRef - m.betweenSlidersAndButtons - m.topMargin);
 
-    // Bars below toggle: 9 IO bars when expanded (IN/OUT/TILT/FILTER/PAN/MIX/LIM/MODE_ROW/INV_ROW),
-    // 7 main bars when collapsed (TIME/MOD/PITCH/SCAN/JIT/SMOOTH/STYLE).
-    const int numSliders = ioExpanded ? 9 : 7;
-    const int numGaps    = ioExpanded ? 9 : 7;
+    // Match the compact-menu vertical density used by DISP/FREQ/ECHO so the
+    // shared utility block keeps the same visual weight across plugins.
+    const int numSliders = ioExpanded ? 10 : 7;
+    const int numGaps    = ioExpanded ? 10 : 7;
 
     m.toggleBarH = 20;
     const int spaceForScale = juce::jmax (40, m.availableForSliders - m.toggleBarH);
@@ -4285,6 +4310,9 @@ juce::Slider* GRATRAudioProcessorEditor::getSliderForValueAreaPoint (juce::Point
     if (cachedValueAreas_[7].contains (p))  return &inputSlider;
     if (cachedValueAreas_[8].contains (p))  return &outputSlider;
     if (cachedValueAreas_[10].contains (p)) return &mixSlider;
+    if (cachedTiltValueArea_.contains (p))  return &tiltSlider;
+    if (cachedPanValueArea_.contains (p))   return &panSlider;
+    if (cachedLimThresholdValueArea_.contains (p)) return &limThresholdSlider;
 
     return nullptr;
 }
@@ -4522,7 +4550,10 @@ void GRATRAudioProcessorEditor::mouseDoubleClick (const juce::MouseEvent& e)
         else if (slider == &modSlider)      slider->setValue (0.5, juce::sendNotificationSync);
         else if (slider == &inputSlider)    slider->setValue (kDefaultInput, juce::sendNotificationSync);
         else if (slider == &outputSlider)   slider->setValue (kDefaultOutput, juce::sendNotificationSync);
+        else if (slider == &tiltSlider)     slider->setValue (kDefaultTilt, juce::sendNotificationSync);
+        else if (slider == &panSlider)      slider->setValue ((double) GRATRAudioProcessor::kPanDefault, juce::sendNotificationSync);
         else if (slider == &mixSlider)      slider->setValue (kDefaultMix, juce::sendNotificationSync);
+        else if (slider == &limThresholdSlider) slider->setValue (kDefaultLimThreshold, juce::sendNotificationSync);
         return;
     }
 }
@@ -4727,15 +4758,15 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
         if (limThresholdSlider.isVisible() && cachedLimThresholdValueArea_.getWidth() > 0)
             drawLegendForMode (cachedLimThresholdValueArea_, cachedLimThresholdTextFull, cachedLimThresholdTextShort, cachedLimThresholdIntOnly);
 
-        // Mode In / Mode Out / Sum Bus / Limiter Mode labels above combos
+        // Compact-menu combo labels.
         if (modeInCombo.isVisible())
         {
-            const auto font = juce::Font (juce::FontOptions (11.0f).withStyle ("Bold"));
+            const auto font = juce::Font (juce::FontOptions (15.0f).withStyle ("Bold"));
             g.setColour (scheme.text);
             g.setFont (font);
             auto drawComboLabel = [&] (const juce::ComboBox& combo, const juce::String& full, const juce::String& shortTxt)
             {
-                const auto area = combo.getBounds().withHeight (14).translated (0, -15);
+                const auto area = combo.getBounds().withHeight (18).translated (0, -19);
                 const float comboW = (float) combo.getWidth();
                 juce::GlyphArrangement ga;
                 ga.addLineOfText (font, full, 0.0f, 0.0f);
@@ -4746,23 +4777,6 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
             drawComboLabel (modeOutCombo, "MODE OUT", "OUT");
             drawComboLabel (sumBusCombo,  "SUM BUS",  "SUM");
             drawComboLabel (limModeCombo, "LIMIT",    "LIM");
-        }
-
-        // Invert Polarity / Invert Stereo labels above combos
-        if (invPolCombo.isVisible())
-        {
-            const auto font = juce::Font (juce::FontOptions (11.0f).withStyle ("Bold"));
-            g.setColour (scheme.text);
-            g.setFont (font);
-            auto drawComboLabel = [&] (const juce::ComboBox& combo, const juce::String& full, const juce::String& shortTxt)
-            {
-                const auto area = combo.getBounds().withHeight (14).translated (0, -15);
-                const float comboW = (float) combo.getWidth();
-                juce::GlyphArrangement ga;
-                ga.addLineOfText (font, full, 0.0f, 0.0f);
-                const bool useShort = ga.getBoundingBox (0, -1, false).getWidth() > comboW;
-                g.drawText (useShort ? shortTxt : full, area, juce::Justification::centred);
-            };
             drawComboLabel (mixModeCombo, "MIX", "MIX");
             drawComboLabel (filterPosCombo, "F / T", "F/T");
             drawComboLabel (invPolCombo, "INV POL", "POL");
@@ -4933,15 +4947,22 @@ void GRATRAudioProcessorEditor::resized()
         dualMixBar_.setBounds  (horizontalLayout.leftX, mainTop + 5 * step, horizontalLayout.barW, verticalLayout.barH);
         limThresholdSlider.setBounds (horizontalLayout.leftX, mainTop + 6 * step, horizontalLayout.barW, verticalLayout.barH);
 
-        const int modeRowPad = 10;
+        const int comboGapForBlock = 4;
+        const int comboHForBlock = juce::jlimit (38, 48, verticalLayout.barH + 14);
+        const int labelOffset = 19;
+        const int comboBlockH = labelOffset + comboHForBlock + comboGapForBlock + labelOffset + comboHForBlock;
+        const int blockTopLimit = limThresholdSlider.getBottom() + verticalLayout.gapY;
+        const int blockBottomLimit = verticalLayout.chaosRowY - verticalLayout.gapY;
+        const int availableBlockH = juce::jmax (comboBlockH, blockBottomLimit - blockTopLimit);
+        const int visualTop = blockTopLimit + juce::jmax (0, (availableBlockH - comboBlockH) / 2);
 
         // Mode In / Mode Out / Sum Bus / Limiter Mode — 4 combos on row 7
         {
-            const int modeY = mainTop + 7 * step + modeRowPad;
+            const int modeY = visualTop + labelOffset;
             const int comboGap = 4;
             const int totalW = horizontalLayout.barW + horizontalLayout.valuePad + horizontalLayout.valueW;
             const int comboW = (totalW - comboGap * 3) / 4;
-            const int comboH = juce::jmax (24, verticalLayout.barH);
+            const int comboH = comboHForBlock;
             modeInCombo.setBounds  (horizontalLayout.leftX,                           modeY, comboW, comboH);
             modeOutCombo.setBounds (horizontalLayout.leftX + (comboW + comboGap),      modeY, comboW, comboH);
             sumBusCombo.setBounds  (horizontalLayout.leftX + (comboW + comboGap) * 2,  modeY, comboW, comboH);
@@ -4950,11 +4971,11 @@ void GRATRAudioProcessorEditor::resized()
 
         // Invert Polarity / Invert Stereo / Mix Mode / Filter Pos — 4 combos on row 8
         {
-            const int invY = mainTop + 7 * step + modeRowPad + juce::jmax (24, verticalLayout.barH) + 18;
+            const int invY = visualTop + labelOffset + comboHForBlock + comboGapForBlock + labelOffset;
             const int comboGap = 4;
             const int totalW = horizontalLayout.barW + horizontalLayout.valuePad + horizontalLayout.valueW;
             const int comboW = (totalW - comboGap * 3) / 4;
-            const int comboH = juce::jmax (24, verticalLayout.barH);
+            const int comboH = comboHForBlock;
             mixModeCombo.setBounds  (horizontalLayout.leftX,                          invY, comboW, comboH);
             filterPosCombo.setBounds(horizontalLayout.leftX + (comboW + comboGap),     invY, comboW, comboH);
             invPolCombo.setBounds   (horizontalLayout.leftX + (comboW + comboGap) * 2, invY, comboW, comboH);

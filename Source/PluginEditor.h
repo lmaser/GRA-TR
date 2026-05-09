@@ -312,7 +312,8 @@ private:
 
         void positionComboBoxText (juce::ComboBox& box, juce::Label& label) override
         {
-            label.setBounds (0, 0, box.getWidth(), box.getHeight());
+            label.setFont (getComboBoxFont (box));
+            label.setBounds (1, 1, box.getWidth() - 2, box.getHeight() - 2);
             label.setJustificationType (juce::Justification::centred);
         }
 
@@ -583,9 +584,9 @@ private:
     static constexpr double kDefaultLimThreshold = 0.0;
 
     static constexpr int kMinW = 360;
-    static constexpr int kMinH = 660;
+    static constexpr int kMinH = 740;
     static constexpr int kMaxW = 800;
-    static constexpr int kMaxH = 760;
+    static constexpr int kMaxH = 820;
 
     static constexpr int kLayoutVerticalBiasPx = 10;
 
