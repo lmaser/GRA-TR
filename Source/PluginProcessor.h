@@ -745,11 +745,11 @@ private:
 				chaosGRng_[c], period, chaosAmtNormD_, sr);
 		}
 
+		// Delay modulation stays mono-linked to avoid mono-sum phaser/comb artifacts.
+		// Gain modulation may stay stereo for width when the mode supports it.
+		chaosDOut_[1] = chaosDOut_[0];
 		if (! chaosStereo_)
-		{
-			chaosDOut_[1] = chaosDOut_[0];
 			chaosGOut_[1] = chaosGOut_[0];
-		}
 	}
 
 	inline void advanceChaosF() noexcept
