@@ -146,8 +146,8 @@ private:
     BarSlider modSlider;
     BarSlider pitchSlider;
     BarSlider scanSlider;
-    BarSlider jitterSlider;
     BarSlider smoothSlider;
+    BarSlider jitterSlider;
     BarSlider modeSlider;
     BarSlider inputSlider;
     BarSlider outputSlider;
@@ -186,8 +186,8 @@ private:
     std::unique_ptr<SliderAttachment> modAttachment;
     std::unique_ptr<SliderAttachment> pitchAttachment;
     std::unique_ptr<SliderAttachment> scanAttachment;
-    std::unique_ptr<SliderAttachment> jitterAttachment;
     std::unique_ptr<SliderAttachment> smoothAttachment;
+    std::unique_ptr<SliderAttachment> jitterAttachment;
     std::unique_ptr<SliderAttachment> modeAttachment;
     std::unique_ptr<SliderAttachment> inputAttachment;
     std::unique_ptr<SliderAttachment> outputAttachment;

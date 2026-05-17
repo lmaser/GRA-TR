@@ -213,8 +213,8 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	modParam      = apvts.getRawParameterValue (kParamMod);
 	pitchParam    = apvts.getRawParameterValue (kParamPitch);
 	scanParam     = apvts.getRawParameterValue (kParamScan);
-	jitterParam   = apvts.getRawParameterValue (kParamJitter);
 	smoothParam   = apvts.getRawParameterValue (kParamSmooth);
+	jitterParam   = apvts.getRawParameterValue (kParamJitter);
 	modeParam     = apvts.getRawParameterValue (kParamMode);
 	inputParam    = apvts.getRawParameterValue (kParamInput);
 	outputParam   = apvts.getRawParameterValue (kParamOutput);
@@ -2305,12 +2305,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 		juce::NormalisableRange<float> (kScanMin, kScanMax, 0.001f, 1.0f), kScanDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
-		kParamJitter, "Jitter",
-		juce::NormalisableRange<float> (kJitterMin, kJitterMax, 0.001f, 1.0f), kJitterDefault));
-
-	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamSmooth, "Smooth",
 		juce::NormalisableRange<float> (kSmoothMin, kSmoothMax, 0.01f, 1.0f), kSmoothDefault));
+
+	params.push_back (std::make_unique<juce::AudioParameterFloat> (
+		kParamJitter, "Jitter",
+		juce::NormalisableRange<float> (kJitterMin, kJitterMax, 0.001f, 1.0f), kJitterDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamMode, "Style",

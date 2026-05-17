@@ -175,8 +175,8 @@ Controls how the wet path is injected into the final output:
 
 ### SYNC
 
-Locks grain length to DAW tempo. Provides 30 musical subdivisions:
-1/64 through 8/1, each with triplet, normal, and dotted variants.
+Locks grain length to DAW tempo. Provides 29 musical subdivisions, ordered by real duration and capped at 8/1.
+Fast triplet / straight / dotted divisions are available through long bar-length values.
 Disabled when MIDI is active (MIDI takes priority).
 
 ### MIDI

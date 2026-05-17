@@ -22,8 +22,8 @@ public:
 	static constexpr const char* kParamMod        = "mod";
 	static constexpr const char* kParamPitch      = "pitch";
 	static constexpr const char* kParamScan       = "scan";
-	static constexpr const char* kParamJitter     = "jitter";
 	static constexpr const char* kParamSmooth     = "smooth";
+	static constexpr const char* kParamJitter     = "jitter";
 	static constexpr const char* kParamMode       = "mode";       // 0=MONO 1=STEREO 2=WIDE 3=DUAL
 	static constexpr const char* kParamInput      = "input";
 	static constexpr const char* kParamOutput     = "output";
@@ -114,13 +114,13 @@ public:
 	static constexpr float kScanMax     =  100.0f;
 	static constexpr float kScanDefault =    0.0f;
 
-	static constexpr float kJitterMin     = 0.0f;
-	static constexpr float kJitterMax     = 1.0f;
-	static constexpr float kJitterDefault = 0.0f;
-
 	static constexpr float kSmoothMin     = 0.0f;
 	static constexpr float kSmoothMax     = 100.0f;
 	static constexpr float kSmoothDefault = 25.0f;
+
+	static constexpr float kJitterMin     = 0.0f;
+	static constexpr float kJitterMax     = 1.0f;
+	static constexpr float kJitterDefault = 0.0f;
 
 	static constexpr float kGainFloorDb  = -144.0f;
 	static constexpr float kGainMaxDb    =   24.0f;
@@ -669,8 +669,8 @@ private:
 	std::atomic<float>* modParam      = nullptr;
 	std::atomic<float>* pitchParam    = nullptr;
 	std::atomic<float>* scanParam     = nullptr;
-	std::atomic<float>* jitterParam   = nullptr;
 	std::atomic<float>* smoothParam   = nullptr;
+	std::atomic<float>* jitterParam   = nullptr;
 	std::atomic<float>* modeParam     = nullptr;
 	std::atomic<float>* inputParam    = nullptr;
 	std::atomic<float>* outputParam   = nullptr;
