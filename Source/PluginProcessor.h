@@ -458,6 +458,16 @@ private:
 		juce::Random rng;
 	};
 
+	struct JitterMetrics
+	{
+		float amount = 0.0f;
+		float delayMs = 1.0f;
+		float shortness = 0.0f;
+		float longness = 0.0f;
+		float driftRateHz = 0.1f;
+		float flutterRateHz = 4.0f;
+	};
+
 	struct JitterLaunchValues
 	{
 		float sourceLenSamples = 0.0f;
@@ -480,10 +490,39 @@ private:
 	float jitterRapidOut_[2] = {};
 	float jitterSmoothed_ = kJitterDefault;
 	float jitterSmoothStep_ = 0.001f;
+
+	static constexpr float kJitterMinDelaySamples = 2.0f;
+	static constexpr float kJitterMinDelayMs = 0.05f;
+	static constexpr float kJitterShortRefMs = 8.0f;
+	static constexpr float kJitterMidRefMs = 500.0f;
+	static constexpr float kJitterLongRefMs = 4000.0f;
+	static constexpr float kJitterLongnessRefMs = 250.0f;
+	static constexpr float kJitterHighStart = 0.55f;
+	static constexpr float kJitterHighRange = 0.45f;
+	static constexpr float kJitterDriftRateMinHz = 0.03f;
+	static constexpr float kJitterDriftRateMaxHz = 2.0f;
+	static constexpr float kJitterDriftRateBaseHz = 0.08f;
+	static constexpr float kJitterDriftRateTopHz = 1.20f;
+	static constexpr float kJitterDriftLongnessDamping = 0.65f;
+	static constexpr float kJitterDriftShortnessBoost = 0.10f;
+	static constexpr float kJitterFlutterRateMinHz = 2.0f;
+	static constexpr float kJitterFlutterRateMaxHz = 7000.0f;
+	static constexpr float kJitterFlutterRateBaseHz = 4.0f;
+	static constexpr float kJitterFlutterRateTopHz = 130.0f;
+	static constexpr float kJitterFlutterRefMs = 250.0f;
+	static constexpr float kJitterFlutterDelayPower = 0.90f;
+	static constexpr float kJitterFlutterHighBoost = 0.08f;
+	static constexpr float kJitterLegacyDriftReferenceHz = 0.10f;
+	static constexpr float kJitterSlowRateMinHz = 0.01f;
+	static constexpr float kJitterSlowRateMaxHz = 8.0f;
+	static constexpr float kJitterFastRateMaxHz = 7000.0f;
+
 	void resetJitterEngines() noexcept;
-	float advanceJitterEngine (JitterEngine& engine, float fastRateHz, float fastBlend,
-	                           float maxFastRateHz = 32.0f, float maxBlend = 0.35f) noexcept;
-	void advanceJitterEngines (float amount) noexcept;
+	JitterMetrics makeJitterMetrics (float referenceSamples, float amount) const noexcept;
+	float advanceJitterEngine (JitterEngine& engine, float slowRateHz, float fastRateHz,
+	                           float fastBlend, float maxSlowRateHz = kJitterSlowRateMaxHz,
+	                           float maxFastRateHz = kJitterFastRateMaxHz, float maxBlend = 0.35f) noexcept;
+	void advanceJitterEngines (float amount, float referenceSamples) noexcept;
 	JitterLaunchValues makeJitterLaunchValues (int ch, int mode, float sourceLenSamples) const noexcept;
 
 	// Per-sample EMA-smoothed parameters ---------------------------
@@ -873,50 +912,6 @@ private:
 	float limAtt1_  = 0.0f;
 	float limRel1_  = 0.0f;
 	float limRel2_  = 0.0f;
-
-	inline void applyLimiter (float* leftData, float* rightData, int numSamples,
-	                         float thresholdGain) noexcept
-	{
-		for (int i = 0; i < numSamples; ++i)
-		{
-			const float peakL = std::abs (leftData[i]);
-			const float peakR = std::abs (rightData[i]);
-
-	// Stage 1 - leveler (2 ms attack, 10 ms release)
-			for (int ch = 0; ch < 2; ++ch)
-			{
-				const float p = (ch == 0) ? peakL : peakR;
-				if (p > limEnv1_[ch])
-					limEnv1_[ch] = limAtt1_ * limEnv1_[ch] + (1.0f - limAtt1_) * p;
-				else
-					limEnv1_[ch] = limRel1_ * limEnv1_[ch] + (1.0f - limRel1_) * p;
-				if (limEnv1_[ch] < kLimFloor) limEnv1_[ch] = kLimFloor;
-			}
-
-	// Stage 2 - brickwall (instant attack, 100 ms release)
-			for (int ch = 0; ch < 2; ++ch)
-			{
-				const float p = (ch == 0) ? peakL : peakR;
-				if (p > limEnv2_[ch])
-					limEnv2_[ch] = p;
-				else
-					limEnv2_[ch] = limRel2_ * limEnv2_[ch] + (1.0f - limRel2_) * p;
-				if (limEnv2_[ch] < kLimFloor) limEnv2_[ch] = kLimFloor;
-			}
-
-			// Stereo-linked gain reduction
-			float gr = 1.0f;
-			const float maxEnv1 = juce::jmax (limEnv1_[0], limEnv1_[1]);
-			const float maxEnv2 = juce::jmax (limEnv2_[0], limEnv2_[1]);
-			if (maxEnv1 > thresholdGain)
-				gr = juce::jmin (gr, thresholdGain / maxEnv1);
-			if (maxEnv2 > thresholdGain)
-				gr = juce::jmin (gr, thresholdGain / maxEnv2);
-
-			leftData[i]  *= gr;
-			rightData[i] *= gr;
-		}
-	}
 
 	inline void applyLimiterSample (float& sampleL, float& sampleR, float thresholdGain) noexcept
 	{

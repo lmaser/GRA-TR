@@ -767,8 +767,42 @@ void GRATRAudioProcessor::resetJitterEngines() noexcept
 	}
 }
 
-float GRATRAudioProcessor::advanceJitterEngine (JitterEngine& engine, float fastRateHz, float fastBlend,
-                                                float maxFastRateHz, float maxBlend) noexcept
+GRATRAudioProcessor::JitterMetrics
+GRATRAudioProcessor::makeJitterMetrics (float referenceSamples, float amount) const noexcept
+{
+	auto smoothStep = [] (float x) noexcept
+	{
+		const float t = juce::jlimit (0.0f, 1.0f, x);
+		return t * t * (3.0f - 2.0f * t);
+	};
+
+	JitterMetrics m;
+	const float sr = juce::jmax (1.0f, (float) currentSampleRate);
+	m.amount = juce::jlimit (0.0f, 1.0f, amount);
+	m.delayMs = juce::jmax (kJitterMinDelayMs,
+	                        juce::jmax (kJitterMinDelaySamples, referenceSamples) * 1000.0f / sr);
+	m.shortness = juce::jlimit (0.0f, 1.0f,
+		std::log2 (kJitterMidRefMs / m.delayMs) / std::log2 (kJitterMidRefMs / kJitterShortRefMs));
+	m.longness = juce::jlimit (0.0f, 1.0f,
+		std::log2 (m.delayMs / kJitterLongnessRefMs) / std::log2 (kJitterLongRefMs / kJitterLongnessRefMs));
+
+	const float high = smoothStep ((m.amount - kJitterHighStart) / kJitterHighRange);
+	m.driftRateHz = (kJitterDriftRateBaseHz + (kJitterDriftRateTopHz - kJitterDriftRateBaseHz) * m.amount)
+	              * (1.0f - kJitterDriftLongnessDamping * m.longness)
+	              * (1.0f + kJitterDriftShortnessBoost * m.shortness);
+	m.driftRateHz = juce::jlimit (kJitterDriftRateMinHz, kJitterDriftRateMaxHz, m.driftRateHz);
+
+	m.flutterRateHz = (kJitterFlutterRateBaseHz + (kJitterFlutterRateTopHz - kJitterFlutterRateBaseHz) * m.amount)
+	                * std::pow (kJitterFlutterRefMs / m.delayMs, kJitterFlutterDelayPower)
+	                * (1.0f + kJitterFlutterHighBoost * high);
+	m.flutterRateHz = juce::jlimit (kJitterFlutterRateMinHz, kJitterFlutterRateMaxHz, m.flutterRateHz);
+	return m;
+}
+
+float GRATRAudioProcessor::advanceJitterEngine (JitterEngine& engine, float slowRateHz,
+                                                float fastRateHz, float fastBlend,
+                                                float maxSlowRateHz, float maxFastRateHz,
+                                                float maxBlend) noexcept
 {
 	const float sr = juce::jmax (1.0f, (float) currentSampleRate);
 	auto wrapPhase = [] (float phase) noexcept
@@ -781,8 +815,19 @@ float GRATRAudioProcessor::advanceJitterEngine (JitterEngine& engine, float fast
 		return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
 	};
 
-	engine.driftPhaseA = wrapPhase (engine.driftPhaseA + engine.driftRateHzA / sr);
-	engine.driftPhaseB = wrapPhase (engine.driftPhaseB + engine.driftRateHzB / sr);
+	const float safeSlowRateHz = juce::jlimit (kJitterSlowRateMinHz,
+		juce::jmax (kJitterSlowRateMinHz, maxSlowRateHz), slowRateHz);
+	const float slowRateA = juce::jlimit (kJitterSlowRateMinHz,
+		juce::jmax (kJitterSlowRateMinHz, maxSlowRateHz),
+		safeSlowRateHz * juce::jmax (kJitterLegacyDriftReferenceHz,
+		                              engine.driftRateHzA / kJitterLegacyDriftReferenceHz));
+	const float slowRateB = juce::jlimit (kJitterSlowRateMinHz,
+		juce::jmax (kJitterSlowRateMinHz, maxSlowRateHz),
+		safeSlowRateHz * juce::jmax (kJitterLegacyDriftReferenceHz,
+		                              engine.driftRateHzB / kJitterLegacyDriftReferenceHz));
+
+	engine.driftPhaseA = wrapPhase (engine.driftPhaseA + slowRateA / sr);
+	engine.driftPhaseB = wrapPhase (engine.driftPhaseB + slowRateB / sr);
 	const float slow = std::sin (engine.driftPhaseA * kTwoPi) * 0.68f
 	                 + std::sin (engine.driftPhaseB * kTwoPi) * 0.32f;
 
@@ -800,23 +845,28 @@ float GRATRAudioProcessor::advanceJitterEngine (JitterEngine& engine, float fast
 	return juce::jlimit (-1.0f, 1.0f, slow * (1.0f - blend) + sh * blend);
 }
 
-void GRATRAudioProcessor::advanceJitterEngines (float amount) noexcept
+void GRATRAudioProcessor::advanceJitterEngines (float amount, float referenceSamples) noexcept
 {
 	const float amt = juce::jlimit (0.0f, 1.0f, amount);
 	const float high = juce::jlimit (0.0f, 1.0f, (amt - 0.55f) / 0.45f);
 	const float fastBlend = high * high * (3.0f - 2.0f * high) * 0.35f;
-	const float fastBaseHz = 2.0f + 16.0f * amt * amt;
 	const float finalRange = juce::jlimit (0.0f, 1.0f, (amt - 0.80f) / 0.20f);
 	const float finalShape = finalRange * finalRange * (3.0f - 2.0f * finalRange);
+	const auto metrics = makeJitterMetrics (referenceSamples, amt);
 
 	for (int ch = 0; ch < 2; ++ch)
 	{
-		jitterSourceOut_[ch] = advanceJitterEngine (jitterSource_[ch], fastBaseHz * 0.83f, fastBlend);
-		jitterAnchorOut_[ch] = advanceJitterEngine (jitterAnchor_[ch], fastBaseHz * 1.17f, fastBlend);
-		jitterPitchOut_[ch]  = advanceJitterEngine (jitterPitch_[ch],  fastBaseHz * 1.41f, fastBlend);
-		jitterReadBendOut_[ch] = advanceJitterEngine (jitterReadBend_[ch], fastBaseHz * 2.20f, fastBlend);
+		jitterSourceOut_[ch] = advanceJitterEngine (jitterSource_[ch],
+			metrics.driftRateHz, metrics.flutterRateHz * 0.83f, fastBlend);
+		jitterAnchorOut_[ch] = advanceJitterEngine (jitterAnchor_[ch],
+			metrics.driftRateHz, metrics.flutterRateHz * 1.17f, fastBlend);
+		jitterPitchOut_[ch]  = advanceJitterEngine (jitterPitch_[ch],
+			metrics.driftRateHz, metrics.flutterRateHz * 1.41f, fastBlend);
+		jitterReadBendOut_[ch] = advanceJitterEngine (jitterReadBend_[ch],
+			metrics.driftRateHz, metrics.flutterRateHz * 2.20f, fastBlend);
 		jitterRapidOut_[ch] = advanceJitterEngine (jitterRapid_[ch],
-			fastBaseHz * 14.40f + 48.0f * finalShape, finalShape * 0.85f, 240.0f, 0.85f);
+			metrics.driftRateHz * 1.35f, metrics.flutterRateHz * 1.04f,
+			finalShape * 0.85f, kJitterSlowRateMaxHz, kJitterFastRateMaxHz, 0.85f);
 	}
 }
 
@@ -1784,8 +1834,6 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		jitterSmoothed_       += (jitterTarget         - jitterSmoothed_)       * jitterSmoothStep_;
 		if (jitterTarget <= 1.0e-5f && jitterSmoothed_ < 1.0e-5f)
 			jitterSmoothed_ = 0.0f;
-		if (jitterTarget > 1.0e-5f || jitterSmoothed_ > 1.0e-5f)
-			advanceJitterEngines (jitterSmoothed_);
 
 		// Smooth grain length (velocity-controlled glide when MIDI active)
 		smoothedGrainLen_ += (effectiveGrainLen - smoothedGrainLen_) * grainLenGlideStep_;
@@ -1805,6 +1853,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			: 1.0f;
 		const float launchSourceLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
 		                                            captureLen * backNForthPitchSpanScale);
+		if (jitterTarget > 1.0e-5f || jitterSmoothed_ > 1.0e-5f)
+			advanceJitterEngines (jitterSmoothed_, launchSourceLen);
 
 #if GRA_TR_BNF_DETERMINISM_DUMP
 		bnfDumpCaptureLen_ = captureLen;

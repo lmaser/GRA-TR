@@ -17,24 +17,24 @@ SCAN scales the captured source span independently from read rate, changing how 
 
 GRA-TR uses a text-based UI with horizontal bar sliders. Core controls stay on the main panel, and the IO section toggles between the main view and the extended IO/routing view without opening separate pages or hidden menus.
 
-- **Bar sliders**: Click and drag horizontally. Right-click for numeric entry (except STYLE, which is slider-only).
+- **Bar sliders**: Click and drag horizontally. Right-click for numeric entry on continuous controls. STYLE is slider-only, and TIME does not open a generic numeric prompt while SYNC is active.
 - **Toggle buttons**: SYNC, MIDI, AUTO, TRG (trigger), RVS (reverse), BNF (Back N Forth). Click to enable/disable.
 - **Sub-labels**: Click the text next to MIDI to open the MIDI channel prompt.
-- **Collapsible INPUT/OUTPUT/MIX section**: Click the toggle bar (triangle) at the top of the slider area to swap between main parameters and the extended IO/routing controls: INPUT, OUTPUT, TILT, FILTER, PAN, MIX, LIMIT, MODE IN/OUT, SUM BUS, INV POL, INV STR, MIX MODE, and FILTER POS. The toggle bar stays fixed in place; only the arrow direction changes. State persists across sessions and preset changes.
+- **Collapsible INPUT/OUTPUT/MIX section**: Click the toggle bar (triangle) at the top of the slider area to swap between main parameters and the extended IO/routing controls: INPUT, OUTPUT, TILT, FILTER, PAN, MIX, LIM, MODE IN/OUT, SUM BUS, INV POL, INV STR, MIX MODE, and FILTER POS. The toggle bar stays fixed in place; only the arrow direction changes. State persists across sessions and preset changes.
 - **Filter bar**: Visible in the INPUT/OUTPUT/MIX section. Click to open the HP/LP filter configuration prompt with frequency, slope, and enable/disable controls for each filter.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and a link to Graphics settings.
 - **Graphics popup**: Toggle CRT post-processing effect and switch between default/custom colour palettes.
 - **Resize**: Drag the bottom-right corner. Size persists across sessions.
 
 The value column to the right of each slider shows the current state in context:
-- TIME shows milliseconds, MIDI note name when MIDI is active, or sync division when SYNC is active.
+- TIME shows milliseconds with dynamic precision, seconds for long values, MIDI note name when MIDI is active, or sync division when SYNC is active.
 - MOD shows the frequency multiplier.
 - PITCH shows semitones with +/- sign and two decimal places.
 - SCAN shows percentage with +/- sign and two decimal places.
 - JIT shows jitter amount as a percentage.
 - SMOOTH shows percentage.
 - STYLE shows MONO/STEREO/WIDE/DUAL.
-- INPUT/OUTPUT show dB values.
+- INPUT/OUTPUT show dB values with 0.0 dB at unity.
 - TILT shows dB values.
 - MIX shows percentage.
 - PAN shows L/C/R position.
@@ -46,6 +46,7 @@ The value column to the right of each slider shows the current state in context:
 Grain length in milliseconds. Controls the size of each grain captured from the circular buffer.
 Overridden by MIDI or SYNC when active.
 Smoothed per-sample for glitch-free sweeps. Default manual smoothing is short and responsive; in MIDI mode the glide time becomes velocity-dependent.
+The visible readout follows the TR Series timing rule: sub-ms values use 3 decimals, short ms values use 2 decimals, mid ms values use 1 decimal, and long values switch to seconds.
 
 When MIDI is active, TIME shows the note name instead of milliseconds. The grain length maps to `1000 / frequency` ms, so higher notes produce shorter grains.
 
@@ -226,7 +227,7 @@ Each chaos target has its own toggle and shares two global controls:
 
 Uses Hermite cubic interpolation (Catmull-Rom) between random targets with a per-channel quadrature drift LFO for organic, stereo-decorrelated movement.
 
-### LIM THRESHOLD (-36 to 0 dB)
+### LIM (-36 to 0 dB)
 
 Peak limiter threshold. Sets the ceiling above which the limiter engages.
 At 0 dB (default) the limiter acts as a transparent safety net. Lower values compress the signal harder.
@@ -282,7 +283,7 @@ Modes:
 ## Changelog
 
 ### v1.4
-- Added dual-stage transparent peak limiter with LIM THRESHOLD (-36 to 0 dB) and LIM MODE (NONE/WET/GLOBAL). Stereo-linked gain reduction with 2 ms/10 ms leveler + instant/100 ms brickwall stages.
+- Added dual-stage transparent peak limiter with LIM (-36 to 0 dB) and LIM MODE (NONE/WET/GLOBAL). Stereo-linked gain reduction with 2 ms/10 ms leveler + instant/100 ms brickwall stages.
 - Added SEND dry/wet controls and smoothing for SEND dry/wet, pan, and limiter threshold to keep fast GUI moves artifact-free.
 - Replaced the old ENV GRA workflow with the main-panel SMOOTH control for grain taper/crossfade shaping in both forward and reverse playback.
 - PITCH and SCAN now support two-decimal precision in the GUI and numeric prompt; SCAN is processed internally with 0.001% parameter resolution.
@@ -292,3 +293,5 @@ Modes:
 - Improved deterministic DAW loop/replay behavior for AUTO + SYNC using host transport/PPQ alignment.
 - Grain taper is now locked per launched grain, so SMOOTH automation does not reshape active grains mid-playback.
 - Removed release-facing performance dump/debug instrumentation.
+- Normalised visible value formatting and prompt suffixes for TIME, dB controls, JIT, SMTH, MIX, LIM, and filter frequency input.
+- Normalised the JIT engine around a time-aware deterministic model while preserving grain-locked launch variation.

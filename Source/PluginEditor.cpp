@@ -36,8 +36,38 @@ static juce::String formatGainFaderDb (float dB)
     if (isGainFaderFloor (dB))
         return "-INF dB";
     if (std::abs (dB) < 0.05f)
-        return "0 dB";
+        return "0.0 dB";
     return juce::String (dB, 1) + " dB";
+}
+
+static juce::String formatGainFaderDbCompact (float dB)
+{
+    if (isGainFaderFloor (dB))
+        return "-INFdB";
+    if (std::abs (dB) < 0.05f)
+        return "0.0dB";
+    return juce::String (dB, 1) + "dB";
+}
+
+static juce::String formatTimeMsForDisplay (float ms, bool withLabel, bool compact)
+{
+    const juce::String suffix = withLabel ? " TIME" : "";
+    if (ms >= 1000.0f)
+        return juce::String (ms / 1000.0f, 2) + (compact ? "s" : " s") + suffix;
+    if (ms >= 100.0f)
+        return juce::String (ms, 1) + (compact ? "ms" : " ms") + suffix;
+    if (ms >= 1.0f)
+        return juce::String (ms, 2) + (compact ? "ms" : " ms") + suffix;
+    return juce::String (ms, 3) + (compact ? "ms" : " ms") + suffix;
+}
+
+static juce::String formatFilterPromptFrequency (float hz)
+{
+    if (hz >= 1000.0f)
+        return juce::String (hz, 2);
+    if (hz >= 100.0f)
+        return juce::String (hz, 1);
+    return juce::String (hz, 2);
 }
 
 // ── Mod slider ↔ multiplier conversion (same as ECHO-TR) ──
@@ -444,12 +474,12 @@ void GRATRAudioProcessorEditor::FilterBarComponent::updateTooltipForTarget (Drag
     if (target == HP)
     {
         const int hz = juce::roundToInt (hpFreq_);
-        setTooltip ("HP: " + juce::String (hz) + " Hz");
+        setTooltip ("HP " + juce::String (hz) + " Hz");
     }
     else if (target == LP)
     {
         const int hz = juce::roundToInt (lpFreq_);
-        setTooltip ("LP: " + juce::String (hz) + " Hz");
+        setTooltip ("LP " + juce::String (hz) + " Hz");
     }
     else
     {
@@ -782,12 +812,12 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
         slider->addListener (this);
     }
 
-    timeSlider.setNumDecimalPlacesToDisplay (1);
+    timeSlider.setNumDecimalPlacesToDisplay (3);
     modSlider.setNumDecimalPlacesToDisplay (2);
     pitchSlider.setNumDecimalPlacesToDisplay (2);
     scanSlider.setNumDecimalPlacesToDisplay (2);
-    jitterSlider.setNumDecimalPlacesToDisplay (1);
-    smoothSlider.setNumDecimalPlacesToDisplay (0);
+    jitterSlider.setNumDecimalPlacesToDisplay (2);
+    smoothSlider.setNumDecimalPlacesToDisplay (2);
     modeSlider.setNumDecimalPlacesToDisplay (0);
     inputSlider.setNumDecimalPlacesToDisplay (1);
     outputSlider.setNumDecimalPlacesToDisplay (1);
@@ -795,7 +825,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     outputSlider.setSkewFactor (GRATRAudioProcessor::kGainSkew);
     tiltSlider.setNumDecimalPlacesToDisplay (1);
     panSlider.setNumDecimalPlacesToDisplay (1);
-    mixSlider.setNumDecimalPlacesToDisplay (1);
+    mixSlider.setNumDecimalPlacesToDisplay (2);
     limThresholdSlider.setNumDecimalPlacesToDisplay (1);
 
     // IO sliders start hidden (collapsible section)
@@ -1506,7 +1536,7 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
         else if (audioProcessor.apvts.getRawParameterValue (GRATRAudioProcessor::kParamSync)->load() > 0.5f)
             cachedTimeIntOnly = juce::String ((int) timeSlider.getValue());
         else
-            cachedTimeIntOnly = juce::String ((int) timeSlider.getValue());
+            cachedTimeIntOnly = formatTimeMsForDisplay ((float) timeSlider.getValue(), false, true);
 
         {
             const float mult = (float) modSliderToMultiplier (modSlider.getValue());
@@ -1530,10 +1560,8 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
         cachedJitterIntOnly = juce::String ((int) std::lround (jitterSlider.getValue() * 100.0)) + "%";
         cachedSmoothIntOnly  = juce::String ((int) std::lround (smoothSlider.getValue())) + "%";
         cachedModeIntOnly    = juce::String ((int) modeSlider.getValue());
-        cachedInputIntOnly   = isGainFaderFloor ((float) inputSlider.getValue())
-                               ? "-INFdB" : juce::String ((int) inputSlider.getValue()) + "dB";
-        cachedOutputIntOnly  = isGainFaderFloor ((float) outputSlider.getValue())
-                               ? "-INFdB" : juce::String ((int) outputSlider.getValue()) + "dB";
+        cachedInputIntOnly   = formatGainFaderDbCompact ((float) inputSlider.getValue());
+        cachedOutputIntOnly  = formatGainFaderDbCompact ((float) outputSlider.getValue());
 
         if (mixModeCombo.getSelectedId() == 2)
         {
@@ -1542,8 +1570,8 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
             const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
             const juce::String suffix = isDry ? " DRY" : " WET";
             if (dB <= -100.0f) cachedMixIntOnly = "-INF" + suffix;
-            else if (std::abs (dB) < 0.05f) cachedMixIntOnly = "0dB" + suffix;
-            else cachedMixIntOnly = juce::String ((int) dB) + "dB" + suffix;
+            else if (std::abs (dB) < 0.05f) cachedMixIntOnly = "0.0dB" + suffix;
+            else cachedMixIntOnly = juce::String (dB, 1) + "dB" + suffix;
         }
         else
         {
@@ -1552,7 +1580,7 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
 
         const float tiltVal = (float) tiltSlider.getValue();
         if (std::abs (tiltVal) < 0.05f)
-            cachedTiltIntOnly = "0dB";
+            cachedTiltIntOnly = "0.0dB";
         else
             cachedTiltIntOnly = juce::String (tiltVal, 1) + "dB";
     }
@@ -1647,9 +1675,7 @@ juce::String GRATRAudioProcessorEditor::getTimeText() const
     }
     
     const float ms = (float) timeSlider.getValue();
-    if (ms >= 1000.0f)
-        return juce::String (ms / 1000.0f, 3) + " s TIME";
-    return juce::String ((int) std::lround (ms)) + " ms TIME";
+    return formatTimeMsForDisplay (ms, true, false);
 }
 
 juce::String GRATRAudioProcessorEditor::getTimeTextShort() const
@@ -1665,9 +1691,7 @@ juce::String GRATRAudioProcessorEditor::getTimeTextShort() const
     }
     
     const float ms = (float) timeSlider.getValue();
-    if (ms >= 1000.0f)
-        return juce::String (ms / 1000.0f, 3) + "s";
-    return juce::String ((int) std::lround (ms)) + "ms";
+    return formatTimeMsForDisplay (ms, false, true);
 }
 
 juce::String GRATRAudioProcessorEditor::getPitchText() const
@@ -1710,7 +1734,7 @@ juce::String GRATRAudioProcessorEditor::getJitterTextShort() const
 
 juce::String GRATRAudioProcessorEditor::getSmoothText() const
 {
-    return juce::String ((int) std::lround (smoothSlider.getValue())) + "% SMOOTH";
+    return juce::String ((int) std::lround (smoothSlider.getValue())) + "% SMTH";
 }
 
 juce::String GRATRAudioProcessorEditor::getSmoothTextShort() const
@@ -1793,7 +1817,7 @@ juce::String GRATRAudioProcessorEditor::getMixText() const
         const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
         const juce::String suffix = isDry ? " DRY" : " WET";
         if (dB <= -100.0f) return "-INF dB" + suffix;
-        if (std::abs (dB) < 0.05f) return "0 dB" + suffix;
+        if (std::abs (dB) < 0.05f) return "0.0 dB" + suffix;
         return juce::String (dB, 1) + " dB" + suffix;
     }
     const int pct = (int) std::lround (mixSlider.getValue() * 100.0);
@@ -1809,7 +1833,7 @@ juce::String GRATRAudioProcessorEditor::getMixTextShort() const
         const float dB = (level <= 0.0001f) ? -100.0f : 20.0f * std::log10 (level);
         const juce::String suffix = isDry ? " DRY" : " WET";
         if (dB <= -100.0f) return "-INF" + suffix;
-        if (std::abs (dB) < 0.05f) return "0dB" + suffix;
+        if (std::abs (dB) < 0.05f) return "0.0dB" + suffix;
         return juce::String (dB, 1) + "dB" + suffix;
     }
     const int pct = (int) std::lround (mixSlider.getValue() * 100.0);
@@ -1820,7 +1844,7 @@ juce::String GRATRAudioProcessorEditor::getTiltText() const
 {
     const float db = (float) tiltSlider.getValue();
     if (std::abs (db) < 0.05f)
-        return "0 dB TILT";
+        return "0.0 dB TILT";
     return juce::String (db, 1) + " dB TILT";
 }
 
@@ -1828,7 +1852,7 @@ juce::String GRATRAudioProcessorEditor::getTiltTextShort() const
 {
     const float db = (float) tiltSlider.getValue();
     if (std::abs (db) < 0.05f)
-        return "0 dB TLT";
+        return "0.0 dB TLT";
     return juce::String (db, 1) + " dB TLT";
 }
 
@@ -1854,8 +1878,8 @@ juce::String GRATRAudioProcessorEditor::getLimThresholdText() const
 {
     const float db = (float) limThresholdSlider.getValue();
     if (std::abs (db) < 0.05f)
-        return "0.0 dB LIMIT";
-    return juce::String (db, 1) + " dB LIMIT";
+        return "0.0 dB LIM";
+    return juce::String (db, 1) + " dB LIM";
 }
 
 juce::String GRATRAudioProcessorEditor::getLimThresholdTextShort() const
@@ -1869,13 +1893,13 @@ juce::String GRATRAudioProcessorEditor::getLimThresholdTextShort() const
 //========================== Legend width constants ==========================
 namespace
 {
-    constexpr const char* kTimeLegendFull   = "5000 ms TIME";
-    constexpr const char* kTimeLegendShort  = "5000ms";
-    constexpr const char* kTimeLegendInt    = "5000";
+    constexpr const char* kTimeLegendFull   = "999.9 ms TIME";
+    constexpr const char* kTimeLegendShort  = "999.9ms";
+    constexpr const char* kTimeLegendInt    = "999.9ms";
 
-    constexpr const char* kModLegendFull   = "100% MOD";
-    constexpr const char* kModLegendShort  = "100%";
-    constexpr const char* kModLegendInt    = "100%";
+    constexpr const char* kModLegendFull   = "X4.00 MOD";
+    constexpr const char* kModLegendShort  = "X4.00";
+    constexpr const char* kModLegendInt    = "X4.00";
 
 constexpr const char* kPitchLegendFull  = "+24.00 st PITCH";
 constexpr const char* kPitchLegendShort = "+24.00st";
@@ -1889,7 +1913,7 @@ constexpr const char* kScanLegendInt   = "-100.00%";
     constexpr const char* kJitterLegendShort = "100% JIT";
     constexpr const char* kJitterLegendInt   = "100%";
 
-    constexpr const char* kSmoothLegendFull  = "100% SMOOTH";
+    constexpr const char* kSmoothLegendFull  = "100% SMTH";
     constexpr const char* kSmoothLegendShort = "100% SMTH";
     constexpr const char* kSmoothLegendInt   = "100%";
 
@@ -1909,7 +1933,7 @@ constexpr const char* kScanLegendInt   = "-100.00%";
     constexpr const char* kMixLegendShort  = "100% MX";
     constexpr const char* kMixLegendInt    = "100%";
 
-    constexpr const char* kLimLegendFull   = "-36.0 dB LIMIT";
+    constexpr const char* kLimLegendFull   = "-36.0 dB LIM";
     constexpr const char* kLimLegendShort  = "-36.0 dB LIM";
     constexpr const char* kLimLegendInt    = "-36.0dB";
 
@@ -2320,15 +2344,18 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     juce::String suffix;
     juce::String suffixShort;
     const bool isTimeSyncMode = (&s == &timeSlider && syncButton.getToggleState());
+    if (isTimeSyncMode)
+        return;
+
     if (&s == &timeSlider)
     {
-        if (isTimeSyncMode) { suffix = ""; suffixShort = ""; }
-        else                { suffix = " MS"; suffixShort = " MS"; }
+        suffix = " MS";
+        suffixShort = " MS";
     }
-    else if (&s == &pitchSlider)     { suffix = " ST PITCH";   suffixShort = " ST"; }
-    else if (&s == &scanSlider)      { suffix = " % SCAN";     suffixShort = " %"; }
-    else if (&s == &jitterSlider)    { suffix = " % JIT";      suffixShort = " %"; }
-    else if (&s == &smoothSlider)    { suffix = " % SMOOTH";   suffixShort = " %"; }
+    else if (&s == &pitchSlider)     { suffix = " ST PITCH";   suffixShort = " ST PCH"; }
+    else if (&s == &scanSlider)      { suffix = " % SCAN";     suffixShort = " % SCN"; }
+    else if (&s == &jitterSlider)    { suffix = " % JIT";      suffixShort = " % JIT"; }
+    else if (&s == &smoothSlider)    { suffix = " % SMTH";     suffixShort = " % SMTH"; }
     else if (&s == &modSlider)       { suffix = " X MOD";      suffixShort = " X"; }
     else if (&s == &inputSlider)     { suffix = " DB INPUT";   suffixShort = " DB IN"; }
     else if (&s == &outputSlider)    { suffix = " DB OUTPUT";  suffixShort = " DB OUT"; }
@@ -2360,11 +2387,15 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     }
     else if (&s == &jitterSlider)
     {
-        currentDisplay = juce::String (s.getValue() * 100.0, 1);
+        currentDisplay = juce::String (s.getValue() * 100.0, 2);
     }
     else if (&s == &smoothSlider)
     {
-        currentDisplay = juce::String ((int) std::lround (s.getValue()));
+        currentDisplay = juce::String (s.getValue(), 2);
+    }
+    else if (&s == &mixSlider)
+    {
+        currentDisplay = juce::String (s.getValue() * 100.0, 2);
     }
     else
         currentDisplay = s.getTextFromValue (s.getValue());
@@ -2415,15 +2446,15 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
         juce::String worstCaseText;
         if (&s == &timeSlider)
-            worstCaseText = isTimeSyncMode ? "1/64T." : "10000.000";
+            worstCaseText = juce::String (GRATRAudioProcessor::kTimeMsMax, 3);
         else if (&s == &pitchSlider)
             worstCaseText = "+24.00";
         else if (&s == &scanSlider)
             worstCaseText = "-100.00";
         else if (&s == &jitterSlider)
-            worstCaseText = "100.0";
+            worstCaseText = "100.00";
         else if (&s == &smoothSlider)
-            worstCaseText = "100";
+            worstCaseText = "100.00";
         else if (&s == &modSlider)
             worstCaseText = "4.00";
         else if (&s == &inputSlider)
@@ -2510,18 +2541,20 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
         if (&s == &timeSlider)
         {
-            if (isTimeSyncMode) { minVal = (double) GRATRAudioProcessor::kTimeSyncMin; maxVal = (double) GRATRAudioProcessor::kTimeSyncMax; maxDecs = 0; maxLen = 6; }
-            else                { minVal = 0.0; maxVal = 10000.0; maxDecs = 3; maxLen = 9; }
+            minVal = GRATRAudioProcessor::kTimeMsMin;
+            maxVal = GRATRAudioProcessor::kTimeMsMax;
+            maxDecs = 3;
+            maxLen = 9;
         }
         else if (&s == &pitchSlider)  { minVal = -24.0; maxVal = 24.0; maxDecs = 2; maxLen = 6; }
         else if (&s == &scanSlider)    { minVal = -100.0; maxVal = 100.0; maxDecs = 2; maxLen = 7; }
-        else if (&s == &jitterSlider) { minVal = 0.0; maxVal = 100.0; maxDecs = 1; maxLen = 5; }
-        else if (&s == &smoothSlider) { minVal = 0.0; maxVal = 100.0; maxDecs = 0; maxLen = 3; }
+        else if (&s == &jitterSlider) { minVal = 0.0; maxVal = 100.0; maxDecs = 2; maxLen = 6; }
+        else if (&s == &smoothSlider) { minVal = 0.0; maxVal = 100.0; maxDecs = 2; maxLen = 6; }
         else if (&s == &modSlider)    { minVal = 0.25;  maxVal = 4.0; maxDecs = 2; maxLen = 4; }
         else if (&s == &inputSlider)  { minVal = GRATRAudioProcessor::kGainFloorDb; maxVal = GRATRAudioProcessor::kGainMaxDb; maxDecs = 1; maxLen = 6; }
         else if (&s == &outputSlider) { minVal = GRATRAudioProcessor::kGainFloorDb; maxVal = GRATRAudioProcessor::kGainMaxDb; maxDecs = 1; maxLen = 6; }
         else if (&s == &tiltSlider)   { minVal = GRATRAudioProcessor::kTiltMin; maxVal = GRATRAudioProcessor::kTiltMax; maxDecs = 1; maxLen = 4; }
-        else if (&s == &mixSlider)    { minVal = 0.0; maxVal = 100.0; maxDecs = 1; maxLen = 5; }
+        else if (&s == &mixSlider)    { minVal = 0.0; maxVal = 100.0; maxDecs = 2; maxLen = 6; }
         else if (&s == &panSlider)    { minVal = 0.0; maxVal = 100.0; maxDecs = 0; maxLen = 3; }
         else if (&s == &limThresholdSlider) { minVal = GRATRAudioProcessor::kLimThresholdMin; maxVal = GRATRAudioProcessor::kLimThresholdMax; maxDecs = 1; maxLen = 5; }
 
@@ -2663,7 +2696,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
             if (safeThis != nullptr && sliderPtr == &safeThis->timeSlider
                 && !safeThis->syncButton.getToggleState())
-                clamped = roundToDecimals (clamped, 2);
+                clamped = roundToDecimals (clamped, 3);
 
             sliderPtr->setValue (clamped, juce::sendNotificationSync);
         }));
@@ -2716,10 +2749,10 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
     auto normToFreq = [] (float n) -> float
     { constexpr float minF = 20.0f, maxF = 20000.0f; return minF * std::pow (2.0f, juce::jlimit (0.0f, 1.0f, n) * std::log2 (maxF / minF)); };
 
-    aw->addTextEditor ("hpFreq", juce::String (juce::roundToInt (hpFreq)), juce::String());
+    aw->addTextEditor ("hpFreq", formatFilterPromptFrequency (hpFreq), juce::String());
     auto* hpBar = new PromptBar (scheme, freqToNorm (hpFreq), freqToNorm (GRATRAudioProcessor::kFilterHpFreqDefault));
     aw->addAndMakeVisible (hpBar);
-    aw->addTextEditor ("lpFreq", juce::String (juce::roundToInt (lpFreq)), juce::String());
+    aw->addTextEditor ("lpFreq", formatFilterPromptFrequency (lpFreq), juce::String());
     auto* lpBar = new PromptBar (scheme, freqToNorm (lpFreq), freqToNorm (GRATRAudioProcessor::kFilterLpFreqDefault));
     aw->addAndMakeVisible (lpBar);
 
@@ -2761,8 +2794,8 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
 
         auto* hpTe = aw->getTextEditor ("hpFreq");
         auto* lpTe = aw->getTextEditor ("lpFreq");
-        float hpF = hpTe ? juce::jlimit (20.0f, 20000.0f, (float) hpTe->getText().getIntValue()) : 20.0f;
-        float lpF = lpTe ? juce::jlimit (20.0f, 20000.0f, (float) lpTe->getText().getIntValue()) : 20000.0f;
+        float hpF = hpTe ? juce::jlimit (20.0f, 20000.0f, (float) hpTe->getText().getFloatValue()) : 20.0f;
+        float lpF = lpTe ? juce::jlimit (20.0f, 20000.0f, (float) lpTe->getText().getFloatValue()) : 20000.0f;
         if (hpF > lpF) { const float mid = (hpF + lpF) * 0.5f; hpF = mid; lpF = mid; }
         if (hpTe) setP (GRATRAudioProcessor::kParamFilterHpFreq, hpF);
         if (lpTe) setP (GRATRAudioProcessor::kParamFilterLpFreq, lpF);
@@ -2811,7 +2844,7 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
         if (isHp) v01 = juce::jmin (v01, lpBar->value01); else v01 = juce::jmax (v01, hpBar->value01);
         if (isHp) { hpBar->value01 = v01; hpBar->repaint(); } else { lpBar->value01 = v01; lpBar->repaint(); }
         if (auto* te = aw->getTextEditor (editorId))
-        { te->setText (juce::String (juce::roundToInt (normToFreq (v01))), juce::sendNotification); te->selectAll(); }
+        { te->setText (formatFilterPromptFrequency (normToFreq (v01)), juce::sendNotification); te->selectAll(); }
         *syncing = false;
         pushParams();
     };
@@ -2823,11 +2856,11 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
     {
         if (*syncing || te == nullptr || bar == nullptr) return;
         *syncing = true;
-        float freq = juce::jlimit (20.0f, 20000.0f, (float) te->getText().getIntValue());
+        float freq = juce::jlimit (20.0f, 20000.0f, (float) te->getText().getFloatValue());
         auto* otherTe = aw->getTextEditor (isHp ? "lpFreq" : "hpFreq");
-        const float otherFreq = otherTe ? juce::jlimit (20.0f, 20000.0f, (float) otherTe->getText().getIntValue()) : (isHp ? 20000.0f : 20.0f);
+        const float otherFreq = otherTe ? juce::jlimit (20.0f, 20000.0f, (float) otherTe->getText().getFloatValue()) : (isHp ? 20000.0f : 20.0f);
         if (isHp) freq = juce::jmin (freq, otherFreq); else freq = juce::jmax (freq, otherFreq);
-        te->setText (juce::String (juce::roundToInt (freq)), juce::dontSendNotification);
+        te->setText (formatFilterPromptFrequency (freq), juce::dontSendNotification);
         bar->value01 = freqToNorm (freq); bar->repaint();
         *syncing = false;
         pushParams();
