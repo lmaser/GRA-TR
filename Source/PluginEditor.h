@@ -74,8 +74,13 @@ private:
             // For time_ms (1-5000 ms)
             if (owner != nullptr && this == &owner->timeSlider)
             {
-                const double rounded2 = std::round (v * 100.0) / 100.0;
-                return juce::String (rounded2, 2);
+                if (v >= 1000.0)
+                    return juce::String (v / 1000.0, 2) + "s";
+                if (v >= 100.0)
+                    return juce::String (v, 1) + "ms";
+                if (v >= 1.0)
+                    return juce::String (v, 2) + "ms";
+                return juce::String (v, 3) + "ms";
             }
 
             // For input/output gain
@@ -584,9 +589,9 @@ private:
     static constexpr double kDefaultLimThreshold = 0.0;
 
     static constexpr int kMinW = 360;
-    static constexpr int kMinH = 740;
-    static constexpr int kMaxW = 800;
-    static constexpr int kMaxH = 820;
+    static constexpr int kMinH = 752;
+    static constexpr int kMaxW = kMinW * 2;
+    static constexpr int kMaxH = kMinH;
 
     static constexpr int kLayoutVerticalBiasPx = 10;
 

@@ -2599,19 +2599,13 @@ float GRATRAudioProcessor::getCurrentGrainMs() const
 
 juce::String GRATRAudioProcessor::getCurrentTimeDisplay() const
 {
-	const bool midiEn = loadBoolParamOrDefault (midiParam, false);
-	const int note = lastMidiNote.load (std::memory_order_relaxed);
-	if (midiEn && note >= 0)
-		return getMidiNoteName (note);
+	const bool midiEnabled = loadBoolParamOrDefault (midiParam, false);
+	const int midiNote = lastMidiNote.load (std::memory_order_relaxed);
+	if (midiEnabled && midiNote >= 0)
+		return getMidiNoteName (midiNote);
 
-	const bool syncEn = loadBoolParamOrDefault (syncParam, false);
-	if (syncEn)
-	{
-		const int idx = loadIntParamOrDefault (timeSyncParam, kTimeSyncDefault);
-		return getTimeSyncName (idx);
-	}
-
-	return juce::String (loadAtomicOrDefault (timeMsParam, kTimeMsDefault), 1) + " ms";
+	// Let the editor own normal TIME/SYNC formatting, matching ECHO-TR.
+	return "";
 }
 
 //==============================================================================

@@ -1691,7 +1691,7 @@ juce::String GRATRAudioProcessorEditor::getTimeTextShort() const
     }
     
     const float ms = (float) timeSlider.getValue();
-    return formatTimeMsForDisplay (ms, false, true);
+    return formatTimeMsForDisplay (ms, false, true) + " TM";
 }
 
 juce::String GRATRAudioProcessorEditor::getPitchText() const
@@ -1894,8 +1894,8 @@ juce::String GRATRAudioProcessorEditor::getLimThresholdTextShort() const
 namespace
 {
     constexpr const char* kTimeLegendFull   = "999.9 ms TIME";
-    constexpr const char* kTimeLegendShort  = "999.9ms";
-    constexpr const char* kTimeLegendInt    = "999.9ms";
+    constexpr const char* kTimeLegendShort  = "5.00s TM";
+    constexpr const char* kTimeLegendInt    = "5.00s";
 
     constexpr const char* kModLegendFull   = "X4.00 MOD";
     constexpr const char* kModLegendShort  = "X4.00";
@@ -2349,20 +2349,20 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
     if (&s == &timeSlider)
     {
-        suffix = " MS";
-        suffixShort = " MS";
+        suffix = " ms";
+        suffixShort = " ms";
     }
-    else if (&s == &pitchSlider)     { suffix = " ST PITCH";   suffixShort = " ST"; }
+    else if (&s == &pitchSlider)     { suffix = " st PITCH";   suffixShort = " st PCH"; }
     else if (&s == &scanSlider)      { suffix = " % SCAN";     suffixShort = " % SCN"; }
     else if (&s == &jitterSlider)    { suffix = " % JIT";      suffixShort = " % JIT"; }
     else if (&s == &smoothSlider)    { suffix = " % SMTH";     suffixShort = " % SMTH"; }
-    else if (&s == &modSlider)       { suffix = " X MOD";      suffixShort = " X"; }
-    else if (&s == &inputSlider)     { suffix = " DB INPUT";   suffixShort = " DB IN"; }
-    else if (&s == &outputSlider)    { suffix = " DB OUTPUT";  suffixShort = " DB OUT"; }
-    else if (&s == &tiltSlider)      { suffix = " DB TILT";    suffixShort = " DB TILT"; }
+    else if (&s == &modSlider)       { suffix = " X MOD";      suffixShort = " X MOD"; }
+    else if (&s == &inputSlider)     { suffix = " dB INPUT";   suffixShort = " dB IN"; }
+    else if (&s == &outputSlider)    { suffix = " dB OUTPUT";  suffixShort = " dB OUT"; }
+    else if (&s == &tiltSlider)      { suffix = " dB TILT";    suffixShort = " dB TILT"; }
     else if (&s == &mixSlider)       { suffix = " % MIX";      suffixShort = " % MIX"; }
-    else if (&s == &panSlider)       { suffix = " % PAN";      suffixShort = " %"; }
-    else if (&s == &limThresholdSlider) { suffix = " DB LIM";  suffixShort = " DB LIM"; }
+    else if (&s == &panSlider)       { suffix = " % PAN";      suffixShort = " % PAN"; }
+    else if (&s == &limThresholdSlider) { suffix = " dB LIM";  suffixShort = " dB LIM"; }
     const juce::String suffixText = suffix.trimStart();
     const juce::String suffixTextShort = suffixShort.trimStart();
     const bool isPercentPrompt = (&s == &mixSlider || &s == &panSlider || &s == &scanSlider || &s == &jitterSlider);
@@ -2396,6 +2396,10 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     else if (&s == &mixSlider)
     {
         currentDisplay = juce::String (s.getValue() * 100.0, 2);
+    }
+    else if (&s == &timeSlider)
+    {
+        currentDisplay = juce::String (s.getValue(), 3);
     }
     else
         currentDisplay = s.getTextFromValue (s.getValue());
@@ -4421,7 +4425,7 @@ juce::Rectangle<int> GRATRAudioProcessorEditor::getBackNForthLabelArea() const
 
 juce::Rectangle<int> GRATRAudioProcessorEditor::getMidiLabelArea() const
 {
-    return makeToggleLabelArea (midiButton, getWidth() - kToggleLegendCollisionPadPx, "MIDI", "MD");
+    return makeToggleLabelArea (midiButton, getWidth() - kToggleLegendCollisionPadPx, "MIDI", "MIDI");
 }
 
 juce::Rectangle<int> GRATRAudioProcessorEditor::getChaosLabelArea() const
@@ -4854,7 +4858,7 @@ void GRATRAudioProcessorEditor::paint (juce::Graphics& g)
         const juce::String autoLabel   = chooseToggleLabel (autoButton,    autoCR,   "AUTO",     "AUT");
         const juce::String trgLabel    = chooseToggleLabel (triggerButton,  trgCR,   "TRIGGER",  "TRG");
         const juce::String syncLabel   = chooseToggleLabel (syncButton,    syncCR,   "SYNC",     "SYN");
-        const juce::String midiLabel   = chooseToggleLabel (midiButton,    midiCR,   "MIDI",     "MD");
+        const juce::String midiLabel   = chooseToggleLabel (midiButton,    midiCR,   "MIDI",     "MIDI");
 
         auto drawToggleLegend = [&] (const juce::Rectangle<int>& labelArea,
                                      const juce::String& labelText,

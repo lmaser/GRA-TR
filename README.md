@@ -24,7 +24,7 @@ GRA-TR uses a text-based UI with horizontal bar sliders. Core controls stay on t
 - **Filter bar**: Visible in the INPUT/OUTPUT/MIX section. Click to open the HP/LP filter configuration prompt with frequency, slope, and enable/disable controls for each filter.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and a link to Graphics settings.
 - **Graphics popup**: Toggle CRT post-processing effect and switch between default/custom colour palettes.
-- **Resize**: Drag the bottom-right corner. Size persists across sessions.
+- **Resize**: Drag the bottom-right corner. Editor width persists across sessions.
 
 The value column to the right of each slider shows the current state in context:
 - TIME shows milliseconds with dynamic precision, seconds for long values, MIDI note name when MIDI is active, or sync division when SYNC is active.
