@@ -4124,20 +4124,36 @@ GRATRAudioProcessorEditor::buildVerticalLayout (int editorH, int biasY, bool ioE
     m.toggleBarH = 20;
     const int spaceForScale = juce::jmax (40, m.availableForSliders - m.toggleBarH);
 
-    const int nominalStack = numSliders * nominalBarH + numGaps * nominalGapY;
-    const double stackScale = nominalStack > 0 ? juce::jmin (1.0, (double) spaceForScale / (double) nominalStack)
-                                               : 1.0;
+    auto fitStack = [&] (int stackSliders, int stackGaps, int targetSpace)
+    {
+        const int nominalStack = stackSliders * nominalBarH + stackGaps * nominalGapY;
+        const double stackScale = nominalStack > 0 ? juce::jmin (1.0, (double) targetSpace / (double) nominalStack)
+                                                   : 1.0;
 
-    m.barH = juce::jmax (14, (int) std::round (nominalBarH * stackScale));
-    m.gapY = juce::jmax (4,  (int) std::round (nominalGapY * stackScale));
+        int barH = juce::jmax (14, (int) std::round (nominalBarH * stackScale));
+        int gapY = juce::jmax (4,  (int) std::round (nominalGapY * stackScale));
 
-    auto stackHeight = [&]() { return numSliders * m.barH + numGaps * m.gapY; };
+        auto stackHeight = [&]() { return stackSliders * barH + stackGaps * gapY; };
 
-    while (stackHeight() > spaceForScale && m.gapY > 4)
-        --m.gapY;
+        while (stackHeight() > targetSpace && gapY > 4)
+            --gapY;
 
-    while (stackHeight() > spaceForScale && m.barH > 14)
-        --m.barH;
+        while (stackHeight() > targetSpace && barH > 14)
+            --barH;
+
+        return std::pair<int, int> { barH, gapY };
+    };
+
+    const auto fittedStack = fitStack (numSliders, numGaps, spaceForScale);
+    m.barH = fittedStack.first;
+    m.gapY = fittedStack.second;
+
+    // The first visible control aligns with the canonical two-toggle-row simple-plugin grid;
+    // GRA's third toggle row only compresses the internal row rhythm below that anchor.
+    const int canonicalSliderBottomRef = m.btnRow2Y;
+    const int canonicalAvailable = juce::jmax (40, canonicalSliderBottomRef - m.betweenSlidersAndButtons - m.topMargin);
+    const int canonicalSpaceForScale = juce::jmax (40, canonicalAvailable - m.toggleBarH);
+    m.firstGapY = fitStack (10, 10, canonicalSpaceForScale).second;
 
     m.topY = m.topMargin;
     m.toggleBarY = m.topY;
@@ -4962,7 +4978,7 @@ void GRATRAudioProcessorEditor::resized()
     const auto horizontalLayout = buildHorizontalLayout (W, getTargetValueColumnWidth());
     const auto verticalLayout = buildVerticalLayout (H, kLayoutVerticalBiasPx, ioSectionExpanded_);
 
-    const int mainTop = verticalLayout.toggleBarY + verticalLayout.toggleBarH + verticalLayout.gapY;
+    const int mainTop = verticalLayout.toggleBarY + verticalLayout.toggleBarH + verticalLayout.firstGapY;
     const int step = verticalLayout.barH + verticalLayout.gapY;
 
     if (ioSectionExpanded_)
