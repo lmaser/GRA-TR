@@ -30,6 +30,12 @@ JuceLibraryCode/*.sdf
 
 # Other
 *.log
+*.csv
+*.tmp
+*.bak
+*.orig
+*.rej
 *.vspscc
 _ReSharper*/
 /.vscode/
+_codex_backups/
