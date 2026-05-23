@@ -1143,9 +1143,9 @@ void GRATRAudioProcessorEditor::sliderValueChanged (juce::Slider* slider)
 {
     auto isBarSlider = [&] (const juce::Slider* s)
     {
-        return s == &timeSlider || s == &pitchSlider || s == &modeSlider || s == &modSlider
-            || s == &scanSlider || s == &jitterSlider || s == &smoothSlider
-            || s == &inputSlider || s == &outputSlider || s == &mixSlider;
+        return s == &timeSlider || s == &modSlider || s == &pitchSlider || s == &scanSlider || s == &smoothSlider
+            || s == &jitterSlider || s == &modeSlider || s == &inputSlider || s == &outputSlider || s == &tiltSlider
+            || s == &panSlider || s == &mixSlider || s == &limThresholdSlider;
     };
 
     refreshLegendTextCache();
