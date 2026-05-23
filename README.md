@@ -73,7 +73,7 @@ SCAN and PITCH are independent controls: PITCH changes read speed, while SCAN ch
 
 Granular jitter engine. Adds deterministic, grain-locked micro-variation to source span, anchor position, pitch, and high-range read motion.
 
-Low and medium values behave like subtle mechanical drift. High values add faster, more unstable motion while preserving the main TIME/SYNC/AUTO scheduler and BNF timing.
+Low and medium values behave like subtle mechanical drift. High values add faster, more unstable motion with a stronger creative ceiling, while preserving the main TIME/SYNC/AUTO scheduler and BNF timing.
 
 At 0%, JIT is neutral and does not alter grain launch values.
 
