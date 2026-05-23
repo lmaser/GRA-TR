@@ -63,11 +63,7 @@ static juce::String formatTimeMsForDisplay (float ms, bool withLabel, bool compa
 
 static juce::String formatFilterPromptFrequency (float hz)
 {
-    if (hz >= 1000.0f)
-        return juce::String (hz, 2);
-    if (hz >= 100.0f)
-        return juce::String (hz, 1);
-    return juce::String (hz, 2);
+    return juce::String (juce::roundToInt (juce::jlimit (20.0f, 20000.0f, hz)));
 }
 
 // ── Mod slider ↔ multiplier conversion (same as ECHO-TR) ──
@@ -2984,6 +2980,10 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
 
     preparePromptTextEditor (*aw, "hpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
     preparePromptTextEditor (*aw, "lpFreq", scheme.bg, scheme.text, scheme.fg, promptFont, false);
+    if (auto* te = aw->getTextEditor ("hpFreq"))
+        te->setInputRestrictions (5, "0123456789");
+    if (auto* te = aw->getTextEditor ("lpFreq"))
+        te->setInputRestrictions (5, "0123456789");
     layoutRows();
 
     styleAlertButtons (*aw, lnf);
