@@ -885,7 +885,7 @@ GRATRAudioProcessor::makeJitterLaunchValues (int ch, int mode, float sourceLenSa
 	const float finalRange = juce::jlimit (0.0f, 1.0f, (amt - 0.80f) / 0.20f);
 	const float finalShape = finalRange * finalRange * (3.0f - 2.0f * finalRange);
 	const float rapid = jitterRapidOut_[lane];
-	constexpr float jitterIntensity = 1.5f;
+	constexpr float jitterIntensity = 3.0f;
 	const float sourceDepth = (0.010f * amt + 0.025f * depth) * (1.0f + 0.55f * finalShape) * jitterIntensity;
 	const float anchorDepth = (0.008f * amt + 0.027f * depth) * (1.0f + 0.75f * finalShape) * jitterIntensity;
 	const float pitchDepthCents = (2.0f * amt + 8.0f * depth) * jitterIntensity;
