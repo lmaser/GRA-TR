@@ -591,7 +591,7 @@ private:
 
     static constexpr int kMinW = 360;
     static constexpr int kMinH = 752;
-    static constexpr int kMaxW = kMinW * 2;
+    static constexpr int kMaxW = kMinW + (kMinW / 2);
     static constexpr int kMaxH = kMinH;
 
     static constexpr int kLayoutVerticalBiasPx = 10;
