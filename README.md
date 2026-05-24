@@ -240,8 +240,8 @@ Limiter insertion point:
 - **GLOBAL**: Limiter applied to the final output (after output gain and dry/wet mix).
 
 The limiter is a dual-stage transparent peak limiter:
-- **Stage 1 (Leveler)**: 2 ms attack, 10 ms release - catches sustained overs.
-- **Stage 2 (Brickwall)**: Instant attack, 100 ms release - catches transient peaks.
+- **Stage 1 (Leveler)**: catches sustained overs.
+- **Stage 2 (Brickwall)**: catches transient peaks.
 
 Stereo-linked gain reduction ensures consistent imaging.
 
@@ -283,7 +283,7 @@ Modes:
 ## Changelog
 
 ### v1.4
-- Added dual-stage transparent peak limiter with LIM (-36 to 0 dB) and LIM MODE (NONE/WET/GLOBAL). Stereo-linked gain reduction with 2 ms/10 ms leveler + instant/100 ms brickwall stages.
+- Added dual-stage transparent peak limiter with LIM (-36 to 0 dB) and LIM MODE (NONE/WET/GLOBAL). Stereo-linked gain reduction with leveler + brickwall stages.
 - Added SEND dry/wet controls and smoothing for SEND dry/wet, pan, and limiter threshold to keep fast GUI moves artifact-free.
 - Replaced the old ENV GRA workflow with the main-panel SMOOTH control for grain taper/crossfade shaping in both forward and reverse playback.
 - PITCH and SCAN now support two-decimal precision in the GUI and numeric prompt; SCAN is processed internally with 0.001% parameter resolution.
