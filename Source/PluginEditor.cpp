@@ -811,7 +811,7 @@ GRATRAudioProcessorEditor::GRATRAudioProcessorEditor (GRATRAudioProcessor& p)
     timeSlider.setNumDecimalPlacesToDisplay (3);
     modSlider.setNumDecimalPlacesToDisplay (2);
     pitchSlider.setNumDecimalPlacesToDisplay (2);
-    scanSlider.setNumDecimalPlacesToDisplay (2);
+    scanSlider.setNumDecimalPlacesToDisplay (0);
     smoothSlider.setNumDecimalPlacesToDisplay (2);
     jitterSlider.setNumDecimalPlacesToDisplay (2);
     modeSlider.setNumDecimalPlacesToDisplay (0);
@@ -1539,11 +1539,11 @@ bool GRATRAudioProcessorEditor::refreshLegendTextCache()
     else
         cachedPitchIntOnly = juce::String (pitchSt, 2) + "st";
 
-        const float scanPct = std::round ((float) scanSlider.getValue() * 100.0f) / 100.0f;
-        if (scanPct > 0.0f)
-            cachedScanIntOnly = "+" + juce::String (scanPct, 2) + "%";
+        const int scanPct = (int) std::lround (scanSlider.getValue());
+        if (scanPct > 0)
+            cachedScanIntOnly = "+" + juce::String (scanPct) + "%";
         else
-            cachedScanIntOnly = juce::String (scanPct, 2) + "%";
+            cachedScanIntOnly = juce::String (scanPct) + "%";
         cachedJitterIntOnly = juce::String ((int) std::lround (jitterSlider.getValue() * 100.0)) + "%";
         cachedSmoothIntOnly  = juce::String ((int) std::lround (smoothSlider.getValue())) + "%";
         cachedModeIntOnly    = juce::String ((int) modeSlider.getValue());
@@ -1697,16 +1697,16 @@ juce::String GRATRAudioProcessorEditor::getPitchTextShort() const
 
 juce::String GRATRAudioProcessorEditor::getScanText() const
 {
-    const float pct = std::round ((float) scanSlider.getValue() * 100.0f) / 100.0f;
-    if (pct > 0.0f) return "+" + juce::String (pct, 2) + "% SCAN";
-    return juce::String (pct, 2) + "% SCAN";
+    const int pct = (int) std::lround (scanSlider.getValue());
+    if (pct > 0) return "+" + juce::String (pct) + "% SCAN";
+    return juce::String (pct) + "% SCAN";
 }
 
 juce::String GRATRAudioProcessorEditor::getScanTextShort() const
 {
-    const float pct = std::round ((float) scanSlider.getValue() * 100.0f) / 100.0f;
-    if (pct > 0.0f) return "+" + juce::String (pct, 2) + "% SCN";
-    return juce::String (pct, 2) + "% SCN";
+    const int pct = (int) std::lround (scanSlider.getValue());
+    if (pct > 0) return "+" + juce::String (pct) + "% SCN";
+    return juce::String (pct) + "% SCN";
 }
 
 juce::String GRATRAudioProcessorEditor::getJitterText() const
@@ -1892,9 +1892,9 @@ constexpr const char* kPitchLegendFull  = "+24.00 st PITCH";
 constexpr const char* kPitchLegendShort = "+24.00st";
 constexpr const char* kPitchLegendInt   = "+24.00st";
 
-constexpr const char* kScanLegendFull  = "-100.00% SCAN";
-constexpr const char* kScanLegendShort = "-100.00% SCN";
-constexpr const char* kScanLegendInt   = "-100.00%";
+constexpr const char* kScanLegendFull  = "-100% SCAN";
+constexpr const char* kScanLegendShort = "-100% SCN";
+constexpr const char* kScanLegendInt   = "-100%";
 
     constexpr const char* kJitterLegendFull  = "100% JIT";
     constexpr const char* kJitterLegendShort = "100% JIT";

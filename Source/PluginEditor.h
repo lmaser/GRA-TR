@@ -104,10 +104,10 @@ private:
             // For SCAN (-100% to +100%)
             if (owner != nullptr && this == &owner->scanSlider)
             {
-                const double rounded2 = std::round (v * 100.0) / 100.0;
-                if (rounded2 > 0.0)
-                    return "+" + juce::String (rounded2, 2);
-                return juce::String (rounded2, 2);
+                const int rounded = (int) std::lround (v);
+                if (rounded > 0)
+                    return "+" + juce::String (rounded);
+                return juce::String (rounded);
             }
 
             // For JIT (0-1 range -> percent)
