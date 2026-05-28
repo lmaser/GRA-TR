@@ -1767,8 +1767,8 @@ juce::String GRATRAudioProcessorEditor::getModTextShort() const
 {
     const float mult = (float) modSliderToMultiplier (modSlider.getValue());
     if (std::abs (mult - 1.0f) < kMultEpsilon)
-        return "X1";
-    return "X" + juce::String (mult, 2);
+        return "X1 MOD";
+    return "X" + juce::String (mult, 2) + " MOD";
 }
 
 juce::String GRATRAudioProcessorEditor::getInputText() const
@@ -1824,7 +1824,7 @@ juce::String GRATRAudioProcessorEditor::getMixTextShort() const
         return juce::String (dB, 1) + "dB" + suffix;
     }
     const int pct = (int) std::lround (mixSlider.getValue() * 100.0);
-    return juce::String (pct) + "% MX";
+    return juce::String (pct) + "% MIX";
 }
 
 juce::String GRATRAudioProcessorEditor::getTiltText() const
@@ -1917,7 +1917,7 @@ constexpr const char* kScanLegendInt   = "-100%";
     constexpr const char* kOutputLegendInt   = "-INFdB";
 
     constexpr const char* kMixLegendFull   = "100% MIX";
-    constexpr const char* kMixLegendShort  = "100% MX";
+    constexpr const char* kMixLegendShort  = "100% MIX";
     constexpr const char* kMixLegendInt    = "100%";
 
     constexpr const char* kLimLegendFull   = "-36.0 dB LIM";
