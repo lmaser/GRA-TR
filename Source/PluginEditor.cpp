@@ -2328,6 +2328,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     lnf.setScheme (activeScheme);
     const auto scheme = activeScheme;
 
+    juce::String prefix;
     juce::String suffix;
     juce::String suffixShort;
     const bool isTimeSyncMode = (&s == &timeSlider && syncButton.getToggleState());
@@ -2343,13 +2344,14 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     else if (&s == &scanSlider)      { suffix = " % SCAN";     suffixShort = " % SCN"; }
     else if (&s == &jitterSlider)    { suffix = " % JIT";      suffixShort = " % JIT"; }
     else if (&s == &smoothSlider)    { suffix = " % SMTH";     suffixShort = " % SMTH"; }
-    else if (&s == &modSlider)       { suffix = " X MOD";      suffixShort = " X MOD"; }
+    else if (&s == &modSlider)       { prefix = "X";           suffix = " MOD";      suffixShort = " MOD"; }
     else if (&s == &inputSlider)     { suffix = " dB INPUT";   suffixShort = " dB IN"; }
     else if (&s == &outputSlider)    { suffix = " dB OUTPUT";  suffixShort = " dB OUT"; }
     else if (&s == &tiltSlider)      { suffix = " dB TILT";    suffixShort = " dB TILT"; }
     else if (&s == &mixSlider)       { suffix = " % MIX";      suffixShort = " % MIX"; }
     else if (&s == &panSlider)       { suffix = " % PAN";      suffixShort = " % PAN"; }
     else if (&s == &limThresholdSlider) { suffix = " dB LIM";  suffixShort = " dB LIM"; }
+    const juce::String prefixText = prefix.trim();
     const juce::String suffixText = suffix.trimStart();
     const juce::String suffixTextShort = suffixShort.trimStart();
     const bool isPercentPrompt = (&s == &mixSlider || &s == &panSlider || &s == &scanSlider || &s == &jitterSlider);
@@ -2414,6 +2416,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
     juce::Rectangle<int> editorBaseBounds;
     std::function<void()> layoutValueAndSuffix;
+    juce::Label* prefixLabel = nullptr;
     juce::Label* suffixLabel = nullptr;
 
     if (auto* te = aw->getTextEditor ("val"))
@@ -2426,6 +2429,13 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
         r.setHeight ((int) (f.getHeight() * kPromptEditorHeightScale) + kPromptEditorHeightPadPx);
         r.setY (juce::jmax (kPromptEditorMinTopPx, r.getY() - kPromptEditorRaiseYPx));
         editorBaseBounds = r;
+
+        prefixLabel = new juce::Label ("prefix", prefixText);
+        prefixLabel->setJustificationType (juce::Justification::centredRight);
+        applyLabelTextColour (*prefixLabel, scheme.text);
+        prefixLabel->setBorderSize (juce::BorderSize<int> (0));
+        prefixLabel->setFont (f);
+        aw->addAndMakeVisible (prefixLabel);
 
         suffixLabel = new juce::Label ("suffix", suffixText);
         suffixLabel->setComponentID (kPromptSuffixLabelId);
@@ -2465,7 +2475,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
         const int maxInputTextW = juce::jmax (1, stringWidth (f, worstCaseText));
 
-        layoutValueAndSuffix = [aw, te, suffixLabel, editorBaseBounds, isPercentPrompt, suffixText, suffixTextShort, maxInputTextW]()
+        layoutValueAndSuffix = [aw, te, prefixLabel, suffixLabel, editorBaseBounds, isPercentPrompt, prefixText, suffixText, suffixTextShort, maxInputTextW]()
         {
             const int contentPad = kPromptInlineContentPadPx;
             const int contentLeft = contentPad;
@@ -2473,10 +2483,11 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             const int availableW = contentRight - contentLeft;
             const int contentCenter = (contentLeft + contentRight) / 2;
 
+            const int prefixW = prefixText.isNotEmpty() ? stringWidth (prefixLabel->getFont(), prefixText) : 0;
             const int fullLabelW = stringWidth (suffixLabel->getFont(), suffixText) + 2;
             const bool stickPercentFull = suffixText.containsChar ('%');
             const int spaceWFull = stickPercentFull ? 0 : juce::jmax (2, stringWidth (suffixLabel->getFont(), " "));
-            const int worstCaseFullW = maxInputTextW + spaceWFull + fullLabelW;
+            const int worstCaseFullW = prefixW + maxInputTextW + spaceWFull + fullLabelW;
 
             const bool useShort = (worstCaseFullW > availableW) && suffixTextShort != suffixText;
             const juce::String& activeSuffix = useShort ? suffixTextShort : suffixText;
@@ -2496,13 +2507,13 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             const int editorW = juce::jlimit (kMinEditorWidthPx, editorBaseBounds.getWidth(), textW + (kEditorTextPadPx * 2));
             er.setWidth (editorW);
 
-            const int combinedW = textW + minGapPx + labelW;
+            const int combinedW = prefixW + textW + minGapPx + labelW;
             int blockLeft = contentCenter - (combinedW / 2);
             const int minBlockLeft = contentLeft;
             const int maxBlockLeft = juce::jmax (minBlockLeft, contentRight - combinedW);
             blockLeft = juce::jlimit (minBlockLeft, maxBlockLeft, blockLeft);
 
-            int teX = blockLeft - ((editorW - textW) / 2);
+            int teX = blockLeft + prefixW - ((editorW - textW) / 2);
             const int minTeX = contentLeft;
             const int maxTeX = juce::jmax (minTeX, contentRight - editorW);
             teX = juce::jlimit (minTeX, maxTeX, teX);
@@ -2510,6 +2521,9 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             te->setBounds (er);
 
             const int textLeftActual = er.getX() + (er.getWidth() - textW) / 2;
+            if (prefixLabel != nullptr)
+                prefixLabel->setBounds (textLeftActual - prefixW, er.getY(), prefixW, juce::jmax (1, er.getHeight()));
+
             int labelX = textLeftActual + textW + minGapPx;
             const int minLabelX = contentLeft;
             const int maxLabelX = juce::jmax (minLabelX, contentRight - labelW);
@@ -2521,6 +2535,11 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
         };
 
         te->setBounds (editorBaseBounds);
+        if (prefixLabel != nullptr)
+        {
+            const int prefixW0 = prefixText.isNotEmpty() ? stringWidth (prefixLabel->getFont(), prefixText) : 0;
+            prefixLabel->setBounds (r.getX() - prefixW0, r.getY() + 1, prefixW0, juce::jmax (1, r.getHeight() - 2));
+        }
         int labelW0 = stringWidth (suffixLabel->getFont(), suffixText) + 2;
         suffixLabel->setBounds (r.getRight() + 2, r.getY() + 1, labelW0, juce::jmax (1, r.getHeight() - 2));
 
@@ -2579,7 +2598,11 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     if (suffixLabel != nullptr && ! editorBaseBounds.isEmpty())
     {
         if (auto* te = aw->getTextEditor ("val"))
+        {
+            if (prefixLabel != nullptr)
+                prefixLabel->setFont (te->getFont());
             suffixLabel->setFont (te->getFont());
+        }
         if (layoutValueAndSuffix) layoutValueAndSuffix();
     }
 
@@ -2613,7 +2636,11 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
         if (auto* suffixLbl = dynamic_cast<juce::Label*> (aw->findChildWithID (kPromptSuffixLabelId)))
         {
             if (auto* te = aw->getTextEditor ("val"))
+            {
+                if (prefixLabel != nullptr)
+                    prefixLabel->setFont (te->getFont());
                 suffixLbl->setFont (te->getFont());
+            }
         }
         if (layoutValueAndSuffix) layoutValueAndSuffix();
 
