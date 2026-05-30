@@ -1705,8 +1705,8 @@ juce::String GRATRAudioProcessorEditor::getScanText() const
 juce::String GRATRAudioProcessorEditor::getScanTextShort() const
 {
     const int pct = (int) std::lround (scanSlider.getValue());
-    if (pct > 0) return "+" + juce::String (pct) + "% SCN";
-    return juce::String (pct) + "% SCN";
+    if (pct > 0) return "+" + juce::String (pct) + "% SCAN";
+    return juce::String (pct) + "% SCAN";
 }
 
 juce::String GRATRAudioProcessorEditor::getJitterText() const
@@ -2355,6 +2355,7 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     const juce::String suffixText = suffix.trimStart();
     const juce::String suffixTextShort = suffixShort.trimStart();
     const bool isPercentPrompt = (&s == &mixSlider || &s == &panSlider || &s == &scanSlider || &s == &jitterSlider);
+    const bool isScanPrompt = (&s == &scanSlider);
 
     auto* aw = new juce::AlertWindow ("", "", juce::AlertWindow::NoIcon);
     aw->setLookAndFeel (&lnf);
@@ -2475,7 +2476,8 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
 
         const int maxInputTextW = juce::jmax (1, stringWidth (f, worstCaseText));
 
-        layoutValueAndSuffix = [aw, te, prefixLabel, suffixLabel, editorBaseBounds, isPercentPrompt, prefixText, suffixText, suffixTextShort, maxInputTextW]()
+        //layoutValueAndSuffix = [aw, te, prefixLabel, suffixLabel, editorBaseBounds, isPercentPrompt, prefixText, suffixText, suffixTextShort, maxInputTextW]()
+        layoutValueAndSuffix = [aw, te, prefixLabel, suffixLabel, editorBaseBounds, isPercentPrompt, isScanPrompt, prefixText, suffixText, suffixTextShort, maxInputTextW]()
         {
             const int contentPad = kPromptInlineContentPadPx;
             const int contentLeft = contentPad;
@@ -2490,8 +2492,10 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             const int worstCaseFullW = prefixW + maxInputTextW + spaceWFull + fullLabelW;
 
             constexpr int kPromptShortLabelComfortPx = 8;
-            const bool useShort = (worstCaseFullW > (availableW - kPromptShortLabelComfortPx))
-                               && suffixTextShort != suffixText;
+            //const bool useShort = (worstCaseFullW > (availableW - kPromptShortLabelComfortPx))
+            const int comfortPx = isScanPrompt ? 24 : kPromptShortLabelComfortPx;
+            const bool useShort = (worstCaseFullW > (availableW - comfortPx))
+            && suffixTextShort != suffixText;
             const juce::String& activeSuffix = useShort ? suffixTextShort : suffixText;
             suffixLabel->setText (activeSuffix, juce::dontSendNotification);
 
