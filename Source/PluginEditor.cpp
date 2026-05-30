@@ -1678,7 +1678,7 @@ juce::String GRATRAudioProcessorEditor::getTimeTextShort() const
     }
     
     const float ms = (float) timeSlider.getValue();
-    return formatTimeMsForDisplay (ms, false, true) + " TM";
+    return formatTimeMsForDisplay (ms, false, true) + " TIME";
 }
 
 juce::String GRATRAudioProcessorEditor::getPitchText() const
@@ -1881,7 +1881,7 @@ juce::String GRATRAudioProcessorEditor::getLimThresholdTextShort() const
 namespace
 {
     constexpr const char* kTimeLegendFull   = "999.9 ms TIME";
-    constexpr const char* kTimeLegendShort  = "5.00s TM";
+    constexpr const char* kTimeLegendShort  = "5.00s TIME";
     constexpr const char* kTimeLegendInt    = "5.00s";
 
     constexpr const char* kModLegendFull   = "X4.00 MOD";
