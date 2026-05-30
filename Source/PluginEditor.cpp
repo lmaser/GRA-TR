@@ -2342,8 +2342,8 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
     }
     else if (&s == &pitchSlider)     { suffix = " st PITCH";   suffixShort = " st PCH"; }
     else if (&s == &scanSlider)      { suffix = " % SCAN";     suffixShort = " % SCN"; }
-    else if (&s == &jitterSlider)    { suffix = " % JIT";      suffixShort = " % JIT"; }
-    else if (&s == &smoothSlider)    { suffix = " % SMTH";     suffixShort = " % SMTH"; }
+    else if (&s == &jitterSlider)    { suffix = " % JITTER";      suffixShort = " % JIT"; }
+    else if (&s == &smoothSlider)    { suffix = " % SMOOTH";     suffixShort = " % SMTH"; }
     else if (&s == &modSlider)       { prefix = "X";           suffix = " MOD";      suffixShort = " MOD"; }
     else if (&s == &inputSlider)     { suffix = " dB INPUT";   suffixShort = " dB IN"; }
     else if (&s == &outputSlider)    { suffix = " dB OUTPUT";  suffixShort = " dB OUT"; }
@@ -2489,7 +2489,9 @@ void GRATRAudioProcessorEditor::openNumericEntryPopupForSlider (juce::Slider& s)
             const int spaceWFull = stickPercentFull ? 0 : juce::jmax (2, stringWidth (suffixLabel->getFont(), " "));
             const int worstCaseFullW = prefixW + maxInputTextW + spaceWFull + fullLabelW;
 
-            const bool useShort = (worstCaseFullW > availableW) && suffixTextShort != suffixText;
+            constexpr int kPromptShortLabelComfortPx = 8;
+            const bool useShort = (worstCaseFullW > (availableW - kPromptShortLabelComfortPx))
+                               && suffixTextShort != suffixText;
             const juce::String& activeSuffix = useShort ? suffixTextShort : suffixText;
             suffixLabel->setText (activeSuffix, juce::dontSendNotification);
 

@@ -30,7 +30,7 @@ The value column to the right of each slider shows the current state in context:
 - TIME shows milliseconds with dynamic precision, seconds for long values, MIDI note name when MIDI is active, or sync division when SYNC is active.
 - MOD shows the frequency multiplier.
 - PITCH shows semitones with +/- sign and two decimal places.
-- SCAN shows percentage with +/- sign and two decimal places.
+- SCAN shows percentage with +/- sign in the main readout; the numeric prompt retains finer decimal entry.
 - JIT shows jitter amount as a percentage.
 - SMOOTH shows percentage.
 - STYLE shows MONO/STEREO/WIDE/DUAL.
@@ -62,7 +62,7 @@ Grain read-rate control. Changes how fast each grain is read back, directly affe
 +12 st = reads at 2x speed (octave up). -12 st = reads at 0.5x speed (octave down).
 The capture window size stays the same - only the playback speed changes.
 
-### SCAN (-100.00% to +100.00%)
+### SCAN (-100% to +100%)
 
 Source-span control. Scales the captured window independently from read rate.
 +100% = captures half the source span.
@@ -286,7 +286,7 @@ Modes:
 - Added dual-stage transparent peak limiter with LIM (-36 to 0 dB) and LIM MODE (NONE/WET/GLOBAL). Stereo-linked gain reduction with leveler + brickwall stages.
 - Added SEND dry/wet controls and smoothing for SEND dry/wet, pan, and limiter threshold to keep fast GUI moves artifact-free.
 - Replaced the old ENV GRA workflow with the main-panel SMOOTH control for grain taper/crossfade shaping in both forward and reverse playback.
-- PITCH and SCAN now support two-decimal precision in the GUI and numeric prompt; SCAN is processed internally with 0.001% parameter resolution.
+- PITCH keeps two-decimal precision in the GUI and numeric prompt. SCAN now uses compact integer display in the main GUI while retaining finer numeric-prompt precision; internally it is still processed at 0.001% parameter resolution.
 - Added BNF (Back N Forth) mode for deterministic forward/reverse alternation.
 - Improved BNF continuity across wide pitch ranges with pitch-aware source spans and internal cell-boundary smoothing.
 - SMOOTH now defaults to 25% for safer click-free startup behavior.
