@@ -1711,7 +1711,7 @@ juce::String GRATRAudioProcessorEditor::getScanTextShort() const
 
 juce::String GRATRAudioProcessorEditor::getJitterText() const
 {
-    return juce::String ((int) std::lround (jitterSlider.getValue() * 100.0)) + "% JIT";
+    return juce::String ((int) std::lround (jitterSlider.getValue() * 100.0)) + "% JITTER";
 }
 
 juce::String GRATRAudioProcessorEditor::getJitterTextShort() const
@@ -1896,7 +1896,7 @@ constexpr const char* kScanLegendFull  = "-100% SCAN";
 constexpr const char* kScanLegendShort = "-100% SCN";
 constexpr const char* kScanLegendInt   = "-100%";
 
-    constexpr const char* kJitterLegendFull  = "100% JIT";
+    constexpr const char* kJitterLegendFull  = "100% JITTER";
     constexpr const char* kJitterLegendShort = "100% JIT";
     constexpr const char* kJitterLegendInt   = "100%";
 
