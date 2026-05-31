@@ -671,14 +671,17 @@ private:
 
 	void clearMidiTrackingState() noexcept;
 	void clearPendingMidiEvents() noexcept;
+	void enqueuePendingMidiEvent (const PendingMidiEvent& event) noexcept;
 	void applyPendingMidiEvent (const PendingMidiEvent& event) noexcept;
 
+	static constexpr int kPendingMidiEventCapacity = 256;
 	std::atomic<int>   lastMidiNote       { -1 };
 	std::atomic<int>   lastMidiVelocity   { 0 };
 	std::atomic<float> currentMidiFrequency { 0.0f };
 	std::atomic<int>   midiChannel        { 0 };
 	std::atomic<int>   midiDelayMs        { 0 };
-	std::vector<PendingMidiEvent> pendingMidiEvents_;
+	std::array<PendingMidiEvent, kPendingMidiEventCapacity> pendingMidiEvents_ {};
+	int pendingMidiEventCount_ = 0;
 
 	// UI state atomics ---------------------------------------------
 	std::atomic<int> uiEditorWidth  { 360 };

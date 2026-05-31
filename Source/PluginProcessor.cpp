@@ -1337,16 +1337,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			if (selectedMidiChannel > 0 && msg.getChannel() != selectedMidiChannel)
 				continue;
 
-			auto queueMidiEvent = [this, midiDelaySamples] (PendingMidiEvent event)
+			auto queueMidiEvent = [this, midiDelaySamples, metadata, numSamples] (PendingMidiEvent event)
 			{
-				if (midiDelaySamples <= 0)
-				{
-					applyPendingMidiEvent (event);
-					return;
-				}
-
-				event.samplesRemaining = midiDelaySamples;
-				pendingMidiEvents_.push_back (event);
+				const int eventSampleInBlock = juce::jlimit (0, juce::jmax (0, numSamples - 1), metadata.samplePosition);
+				event.samplesRemaining = juce::jmax (0, eventSampleInBlock + midiDelaySamples);
+				enqueuePendingMidiEvent (event);
 			};
 
 			if (msg.isAllNotesOff() || msg.isAllSoundOff())
@@ -1873,24 +1868,24 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 #endif
 
 		bool runtimeTriggerEdge = false;
-		if (! pendingMidiEvents_.empty())
+		if (pendingMidiEventCount_ > 0)
 		{
 			bool appliedMidiEvent = false;
-			auto it = pendingMidiEvents_.begin();
-			while (it != pendingMidiEvents_.end())
+			int writeIndex = 0;
+			for (int eventIndex = 0; eventIndex < pendingMidiEventCount_; ++eventIndex)
 			{
-				if (it->samplesRemaining <= 0)
+				const auto event = pendingMidiEvents_[(size_t) eventIndex];
+				if (event.samplesRemaining == i)
 				{
-					applyPendingMidiEvent (*it);
+					applyPendingMidiEvent (event);
 					appliedMidiEvent = true;
-					it = pendingMidiEvents_.erase (it);
 				}
 				else
 				{
-					--it->samplesRemaining;
-					++it;
+					pendingMidiEvents_[(size_t) writeIndex++] = event;
 				}
 			}
+			pendingMidiEventCount_ = writeIndex;
 
 			if (appliedMidiEvent)
 				refreshRuntimeMidiDerivedState();
@@ -2295,6 +2290,12 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 	}
 
+	if (pendingMidiEventCount_ > 0)
+	{
+		for (int eventIndex = 0; eventIndex < pendingMidiEventCount_; ++eventIndex)
+			pendingMidiEvents_[(size_t) eventIndex].samplesRemaining -= numSamples;
+	}
+
 #if GRA_TR_BNF_DETERMINISM_DUMP
 	bnfDumpProcessedSamples_ += (std::uint64_t) juce::jmax (0, numSamples);
 	++bnfDumpBlockIndex_;
@@ -2617,7 +2618,15 @@ void GRATRAudioProcessor::clearMidiTrackingState() noexcept
 
 void GRATRAudioProcessor::clearPendingMidiEvents() noexcept
 {
-	pendingMidiEvents_.clear();
+	pendingMidiEventCount_ = 0;
+}
+
+void GRATRAudioProcessor::enqueuePendingMidiEvent (const PendingMidiEvent& event) noexcept
+{
+	if (pendingMidiEventCount_ >= kPendingMidiEventCapacity)
+		return;
+
+	pendingMidiEvents_[(size_t) pendingMidiEventCount_++] = event;
 }
 
 void GRATRAudioProcessor::applyPendingMidiEvent (const PendingMidiEvent& event) noexcept
