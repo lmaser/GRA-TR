@@ -3171,6 +3171,10 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
     };
 
     std::function<void()> layoutRows;
+    auto applyLiveMidiDelay = [proc = &audioProcessor] (int newDelayMs)
+    {
+        proc->setMidiDelayMs (juce::jlimit (0, 100, newDelayMs));
+    };
 
     if (auto* channelTe = aw->getTextEditor ("channel"))
     {
@@ -3333,16 +3337,17 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
         channelTe->setInputFilter (new MidiChannelInputFilter(), true);
         delayTe->setInputFilter (new MidiDelayInputFilter(), true);
         channelTe->onTextChange = [layoutRows]() mutable { if (layoutRows) layoutRows(); };
-        delayTe->onTextChange = [layoutRows, delayTe, delayBar]() mutable
+        delayTe->onTextChange = [layoutRows, delayTe, delayBar, applyLiveMidiDelay]() mutable
         {
             if (delayBar != nullptr && delayTe != nullptr)
             {
                 const int parsed = juce::jlimit (0, 100, delayTe->getText().getIntValue());
                 delayBar->setValueSilently ((float) parsed / 100.0f);
+                applyLiveMidiDelay (parsed);
             }
             if (layoutRows) layoutRows();
         };
-        delayBar->onValueChanged = [delayTe, layoutRows] (float value01) mutable
+        delayBar->onValueChanged = [delayTe, layoutRows, applyLiveMidiDelay] (float value01) mutable
         {
             if (delayTe == nullptr)
                 return;
@@ -3350,6 +3355,7 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
             const juce::String text (delayValue);
             if (delayTe->getText() != text)
                 delayTe->setText (text, juce::dontSendNotification);
+            applyLiveMidiDelay (delayValue);
             if (layoutRows) layoutRows();
         };
     }
@@ -3391,11 +3397,17 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
     }
 
     aw->enterModalState (true,
-        juce::ModalCallbackFunction::create ([safeThis, aw] (int result) mutable
+        juce::ModalCallbackFunction::create ([safeThis, aw, channel, delayMs] (int result) mutable
         {
             std::unique_ptr<juce::AlertWindow> killer (aw);
             if (safeThis != nullptr) safeThis->setPromptOverlayActive (false);
-            if (safeThis == nullptr || result != 1) return;
+            if (safeThis == nullptr) return;
+            if (result != 1)
+            {
+                safeThis->audioProcessor.setMidiDelayMs (delayMs);
+                safeThis->midiChannelDisplay.setTooltip (formatMidiChannelTooltip (channel, delayMs));
+                return;
+            }
             const auto chTxt = aw->getTextEditorContents ("channel").trim();
             const auto delayTxt = aw->getTextEditorContents ("delay").trim();
             const int ch = juce::jlimit (0, 16, chTxt.isEmpty() ? 0 : chTxt.getIntValue());
