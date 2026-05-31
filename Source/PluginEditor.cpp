@@ -3206,41 +3206,69 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
         delayUnitLabel->setFont (unitFont);
         aw->addAndMakeVisible (delayUnitLabel);
 
-        auto layoutInlineRow = [aw] (juce::TextEditor& editor,
-                                     juce::Label& label,
-                                     juce::Label* trailingUnit,
-                                     int reservedValueTextW,
-                                     int y,
-                                     int rowH)
+        auto layoutChannelRow = [aw] (juce::TextEditor& editor,
+                                      juce::Label& label,
+                                      int reservedValueTextW,
+                                      int y,
+                                      int rowH)
         {
             const auto txt = editor.getText();
             const int textW = juce::jmax (1, stringWidth (editor.getFont(), txt));
             const int spaceW = juce::jmax (2, stringWidth (editor.getFont(), " "));
             const int labelW = stringWidth (label.getFont(), label.getText()) + 2;
-            const int unitW = trailingUnit != nullptr ? (stringWidth (trailingUnit->getFont(), trailingUnit->getText()) + 2) : 0;
             const int contentPad = kPromptInlineContentPadPx;
             const int contentLeft = contentPad;
             const int contentRight = aw->getWidth() - contentPad;
             const int innerW = contentRight - contentLeft;
             constexpr int kMinEditorWidthPx = 24;
             constexpr int kEditorTextPadPx = 16;
-            constexpr int kMinLabelGapPx = 2;
-            const int maxLabelGap = juce::jmax (spaceW, 12);
-            const int valueGap = trailingUnit != nullptr ? 1 : 0;
             const int effectiveValueTextW = juce::jmax (textW, reservedValueTextW);
             int editorW = effectiveValueTextW + kEditorTextPadPx;
-            const float widthRatio = reservedValueTextW > 0
-                ? juce::jlimit (0.0f, 1.0f, (float) textW / (float) reservedValueTextW)
-                : 1.0f;
-            const int visualGap = juce::roundToInt (juce::jmap (widthRatio,
-                                                                (float) kMinLabelGapPx,
-                                                                (float) maxLabelGap));
             const int maxFittedEditorW = juce::jmax (kMinEditorWidthPx,
-                                                     innerW - labelW - kMinLabelGapPx - (trailingUnit != nullptr ? (valueGap + unitW) : 0));
+                                                     innerW - labelW - spaceW);
             editorW = juce::jlimit (kMinEditorWidthPx, maxFittedEditorW, editorW);
 
-            const int unitVisualW = trailingUnit != nullptr ? (valueGap + unitW) : 0;
-            const int visualW = labelW + visualGap + textW + unitVisualW;
+            const int visualW = labelW + spaceW + textW;
+            const int blockLeft = contentLeft + juce::jmax (0, (innerW - visualW) / 2);
+
+            label.setBounds (blockLeft, y, labelW, rowH);
+
+            int teX = blockLeft + labelW + spaceW - ((editorW - textW) / 2);
+            teX = juce::jlimit (contentLeft, juce::jmax (contentLeft, contentRight - editorW), teX);
+            editor.setBounds (teX, y, editorW, rowH);
+        };
+
+        auto layoutDelayRow = [aw] (juce::TextEditor& editor,
+                                    juce::Label& label,
+                                    juce::Label& unitLabel,
+                                    int reservedValueTextW,
+                                    int y,
+                                    int rowH)
+        {
+            const auto txt = editor.getText();
+            const int textW = juce::jmax (1, stringWidth (editor.getFont(), txt));
+            const int spaceW = juce::jmax (2, stringWidth (editor.getFont(), " "));
+            const int labelW = stringWidth (label.getFont(), label.getText()) + 2;
+            const int unitW = stringWidth (unitLabel.getFont(), unitLabel.getText()) + 2;
+            const int contentPad = kPromptInlineContentPadPx;
+            const int contentLeft = contentPad;
+            const int contentRight = aw->getWidth() - contentPad;
+            const int innerW = contentRight - contentLeft;
+            constexpr int kMinEditorWidthPx = 24;
+            constexpr int kEditorTextPadPx = 16;
+            constexpr int kValueGapPx = 1;
+            constexpr int kMaxExtraGapPx = 18;
+
+            const int effectiveValueTextW = juce::jmax (textW, reservedValueTextW);
+            int editorW = effectiveValueTextW + kEditorTextPadPx;
+            const int extraGapPx = juce::jlimit (0, kMaxExtraGapPx,
+                                                 juce::jmax (0, reservedValueTextW - textW));
+            const int visualGap = spaceW + extraGapPx;
+            const int maxFittedEditorW = juce::jmax (kMinEditorWidthPx,
+                                                     innerW - labelW - spaceW - (kValueGapPx + unitW));
+            editorW = juce::jlimit (kMinEditorWidthPx, maxFittedEditorW, editorW);
+
+            const int visualW = labelW + visualGap + textW + kValueGapPx + unitW;
             const int blockLeft = contentLeft + juce::jmax (0, (innerW - visualW) / 2);
 
             label.setBounds (blockLeft, y, labelW, rowH);
@@ -3249,15 +3277,12 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
             teX = juce::jlimit (contentLeft, juce::jmax (contentLeft, contentRight - editorW), teX);
             editor.setBounds (teX, y, editorW, rowH);
 
-            if (trailingUnit != nullptr)
-            {
-                const int unitX = blockLeft + labelW + visualGap + textW + valueGap;
-                trailingUnit->setBounds (unitX, y, unitW, rowH);
-            }
+            const int unitX = teX + editorW + kValueGapPx;
+            unitLabel.setBounds (unitX, y, unitW, rowH);
         };
 
         layoutRows = [aw, channelTe, delayTe, channelLabel, delayLabel, delayUnitLabel, delayBar,
-                      layoutInlineRow]()
+                      layoutChannelRow, layoutDelayRow]()
         {
             if (channelTe == nullptr || delayTe == nullptr || channelLabel == nullptr || delayLabel == nullptr || delayBar == nullptr)
                 return;
@@ -3275,8 +3300,8 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
             // Reserve the full 0..100 display width so DELAY does not visually re-crop as digits grow.
             const int delayReservedTextW = juce::jmax (1, stringWidth (delayTe->getFont(), "100"));
 
-            layoutInlineRow (*channelTe, *channelLabel, nullptr, channelReservedTextW, channelY, rowH);
-            layoutInlineRow (*delayTe, *delayLabel, delayUnitLabel, delayReservedTextW, delayY, rowH);
+            layoutChannelRow (*channelTe, *channelLabel, channelReservedTextW, channelY, rowH);
+            layoutDelayRow (*delayTe, *delayLabel, *delayUnitLabel, delayReservedTextW, delayY, rowH);
 
             const int barX = kPromptInnerMargin;
             const int barW = juce::jmax (120, aw->getWidth() - (kPromptInnerMargin * 2));
