@@ -226,6 +226,8 @@ public:
 
 	void setMidiChannel (int channel);
 	int  getMidiChannel() const noexcept;
+	void setMidiDelayMs (int delayMs);
+	int  getMidiDelayMs() const noexcept;
 
 	void setUiIoExpanded (bool expanded);
 	bool getUiIoExpanded() const noexcept;
@@ -248,6 +250,7 @@ private:
 		static constexpr const char* useCustomPalette = "uiUseCustomPalette";
 		static constexpr const char* crtEnabled       = "uiFxTailEnabled";
 		static constexpr const char* midiPort         = "midiPort";
+		static constexpr const char* midiDelayMs      = "midiDelayMs";
 		static constexpr const char* ioExpanded       = "uiIoExpanded";
 		static constexpr std::array<const char*, 2> customPalette {
 			"uiCustomPalette0", "uiCustomPalette1"
@@ -651,10 +654,31 @@ private:
 	float grainSmoothFraction_ = 0.02f;   // fraction of grain used for fade
 
 	// MIDI state ---------------------------------------------------
+	enum class PendingMidiEventType
+	{
+		noteOn,
+		noteOff,
+		allNotesOff
+	};
+
+	struct PendingMidiEvent
+	{
+		PendingMidiEventType type = PendingMidiEventType::allNotesOff;
+		int note = -1;
+		int velocity = 0;
+		int samplesRemaining = 0;
+	};
+
+	void clearMidiTrackingState() noexcept;
+	void clearPendingMidiEvents() noexcept;
+	void applyPendingMidiEvent (const PendingMidiEvent& event) noexcept;
+
 	std::atomic<int>   lastMidiNote       { -1 };
 	std::atomic<int>   lastMidiVelocity   { 0 };
 	std::atomic<float> currentMidiFrequency { 0.0f };
 	std::atomic<int>   midiChannel        { 0 };
+	std::atomic<int>   midiDelayMs        { 0 };
+	std::vector<PendingMidiEvent> pendingMidiEvents_;
 
 	// UI state atomics ---------------------------------------------
 	std::atomic<int> uiEditorWidth  { 360 };
