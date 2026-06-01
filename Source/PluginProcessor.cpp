@@ -524,9 +524,12 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	grainSizeTransitionSamplesRemaining_ = 0;
 	grainSizeTransitionActive_ = false;
 	prevTriggerState_ = false;
+	lastTriggerParamOn_ = false;
+	delayedTriggerActive_ = false;
 	lastAutoEnabled_  = false;
 	syncedAutoDryFillActive_ = false;
 	syncedAutoDryFillGain_ = 0.0f;
+	triggerDelayElapsedSamples_ = 0;
 	hostTransport_.reset();
 	clearPendingMidiEvents();
 	clearMidiTrackingState();
@@ -640,6 +643,10 @@ void GRATRAudioProcessor::releaseResources()
 	hostTransport_.reset();
 	clearPendingMidiEvents();
 	clearMidiTrackingState();
+	prevTriggerState_ = false;
+	lastTriggerParamOn_ = false;
+	delayedTriggerActive_ = false;
+	triggerDelayElapsedSamples_ = 0;
 }
 
 void GRATRAudioProcessor::updateHostTransportMonitor (
@@ -1329,6 +1336,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		* (double) juce::jlimit (0, 100, getMidiDelayMs()) / 1000.0));
 	const int autoDelaySamples = juce::jmax (0, (int) std::lround ((double) currentSampleRate
 		* (double) juce::jlimit (0, 100, getAutoDelayMs()) / 1000.0));
+	const int triggerDelaySamples = juce::jmax (0, (int) std::lround ((double) currentSampleRate
+		* (double) juce::jlimit (0, 100, getTriggerDelayMs()) / 1000.0));
 
 	if (midiEnabled && ! midiMessages.isEmpty())
 	{
@@ -1386,7 +1395,18 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const bool backNForthEnabled = loadBoolParamOrDefault (backNForthParam, false);
 	const int  midiNote       = lastMidiNote.load (std::memory_order_relaxed);
 	const bool midiNoteActive = midiEnabled && (midiNote >= 0);
-	const bool triggerEnabled = triggerParamOn || midiNoteActive;
+	if (! triggerParamOn)
+	{
+		delayedTriggerActive_ = false;
+		triggerDelayElapsedSamples_ = 0;
+	}
+	else if (! lastTriggerParamOn_)
+	{
+		delayedTriggerActive_ = false;
+		triggerDelayElapsedSamples_ = 0;
+	}
+
+	const bool triggerEnabled = delayedTriggerActive_ || midiNoteActive;
 	const int  mode           = loadIntParamOrDefault (modeParam, 1);
 
 	juce::Optional<juce::AudioPlayHead::PositionInfo> hostPosition;
@@ -1810,6 +1830,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	int runtimeMidiVelocity = lastMidiVelocity.load (std::memory_order_relaxed);
 	float runtimeMidiFrequency = currentMidiFrequency.load (std::memory_order_relaxed);
 	bool runtimeMidiNoteActive = midiNoteActive;
+	bool runtimeManualTriggerActive = delayedTriggerActive_;
 	bool runtimeTriggerEnabled = triggerEnabled;
 	bool runtimePrevTriggerState = prevTriggerState_;
 	float runtimeEffectiveGrainLen = effectiveGrainLen;
@@ -1823,7 +1844,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		runtimeMidiVelocity = lastMidiVelocity.load (std::memory_order_relaxed);
 		runtimeMidiFrequency = currentMidiFrequency.load (std::memory_order_relaxed);
 		runtimeMidiNoteActive = midiEnabled && (runtimeMidiNote >= 0);
-		runtimeTriggerEnabled = triggerParamOn || runtimeMidiNoteActive;
+		runtimeTriggerEnabled = runtimeManualTriggerActive || runtimeMidiNoteActive;
 		runtimeTargetGrainMs = timeMsValue;
 
 		if (runtimeMidiNoteActive)
@@ -1897,10 +1918,24 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				refreshRuntimeMidiDerivedState();
 		}
 
-		const bool currentTriggerState = triggerParamOn || runtimeMidiNoteActive;
+		if (triggerParamOn && ! runtimeManualTriggerActive)
+		{
+			if (triggerDelayElapsedSamples_ >= triggerDelaySamples)
+			{
+				runtimeManualTriggerActive = true;
+				delayedTriggerActive_ = true;
+			}
+			else
+			{
+				++triggerDelayElapsedSamples_;
+			}
+		}
+
+		const bool currentTriggerState = runtimeManualTriggerActive || runtimeMidiNoteActive;
 		runtimeTriggerEdge = currentTriggerState && ! runtimePrevTriggerState;
 		runtimePrevTriggerState = currentTriggerState;
 		runtimeTriggerEnabled = currentTriggerState;
+		runtimeEffectiveMixTarget = (!autoEnabled && !runtimeTriggerEnabled) ? 0.0f : mixValue;
 
 		// S&H chaos advance
 		if (chaosDelayEnabled_) advanceChaosD();
@@ -2322,6 +2357,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	bnfDumpProcessedSamples_ += (std::uint64_t) juce::jmax (0, numSamples);
 	++bnfDumpBlockIndex_;
 #endif
+	delayedTriggerActive_ = runtimeManualTriggerActive;
+	lastTriggerParamOn_ = triggerParamOn;
 	prevTriggerState_ = runtimePrevTriggerState;
 }
 
@@ -2358,6 +2395,16 @@ void GRATRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 			const auto restoredAutoDelay = apvts.state.getProperty (UiStateKeys::autoDelayMs);
 			if (! restoredAutoDelay.isVoid())
 				autoDelayMs.store (juce::jlimit (0, 100, (int) restoredAutoDelay), std::memory_order_relaxed);
+			const auto restoredTriggerDelay = apvts.state.getProperty (UiStateKeys::triggerDelayMs);
+			if (! restoredTriggerDelay.isVoid())
+				triggerDelayMs.store (juce::jlimit (0, 100, (int) restoredTriggerDelay), std::memory_order_relaxed);
+			prevTriggerState_ = false;
+			lastTriggerParamOn_ = false;
+			delayedTriggerActive_ = false;
+			triggerDelayElapsedSamples_ = 0;
+			lastAutoEnabled_ = false;
+			syncedAutoDryFillActive_ = false;
+			syncedAutoDryFillGain_ = 0.0f;
 		}
 	}
 }
@@ -2704,6 +2751,20 @@ int GRATRAudioProcessor::getAutoDelayMs() const noexcept
 	const auto fromState = apvts.state.getProperty (UiStateKeys::autoDelayMs);
 	if (! fromState.isVoid()) return juce::jlimit (0, 100, (int) fromState);
 	return autoDelayMs.load (std::memory_order_relaxed);
+}
+
+void GRATRAudioProcessor::setTriggerDelayMs (int delayMsValue)
+{
+	const int clamped = juce::jlimit (0, 100, delayMsValue);
+	triggerDelayMs.store (clamped, std::memory_order_relaxed);
+	apvts.state.setProperty (UiStateKeys::triggerDelayMs, clamped, nullptr);
+}
+
+int GRATRAudioProcessor::getTriggerDelayMs() const noexcept
+{
+	const auto fromState = apvts.state.getProperty (UiStateKeys::triggerDelayMs);
+	if (! fromState.isVoid()) return juce::jlimit (0, 100, (int) fromState);
+	return triggerDelayMs.load (std::memory_order_relaxed);
 }
 
 void GRATRAudioProcessor::setUiCustomPaletteColour (int index, juce::Colour colour)

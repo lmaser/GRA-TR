@@ -31,6 +31,7 @@ private:
     void openNumericEntryPopupForSlider (juce::Slider& s);
     void openMidiChannelPrompt();
     void openAutoDelayPrompt();
+    void openTriggerDelayPrompt();
     void openFilterPrompt();
     void openChaosConfigPrompt (const char* amtParamId, const char* spdParamId, const juce::String& title);
     void openChaosFilterPrompt();
@@ -148,6 +149,24 @@ private:
         bool allowNumericPopup = true;
     };
 
+    class MainGuiToggleButton : public juce::ToggleButton
+    {
+    public:
+        using juce::ToggleButton::ToggleButton;
+
+        void mouseDown (const juce::MouseEvent& e) override
+        {
+            if (! e.mods.isPopupMenu())
+                juce::ToggleButton::mouseDown (e);
+        }
+
+        void mouseUp (const juce::MouseEvent& e) override
+        {
+            if (! e.mods.isPopupMenu())
+                juce::ToggleButton::mouseUp (e);
+        }
+    };
+
     BarSlider timeSlider;
     BarSlider modSlider;
     BarSlider pitchSlider;
@@ -171,15 +190,17 @@ private:
     juce::ComboBox mixModeCombo;
     juce::ComboBox filterPosCombo;
 
-    juce::ToggleButton syncButton;
-    juce::ToggleButton midiButton;
-    juce::ToggleButton autoButton;
-    juce::ToggleButton triggerButton;
-    juce::ToggleButton reverseButton;
-    juce::ToggleButton backNForthButton;
-    juce::ToggleButton chaosFilterButton;
-    juce::ToggleButton chaosDelayButton;
+    MainGuiToggleButton syncButton;
+    MainGuiToggleButton midiButton;
+    MainGuiToggleButton autoButton;
+    MainGuiToggleButton triggerButton;
+    MainGuiToggleButton reverseButton;
+    MainGuiToggleButton backNForthButton;
+    MainGuiToggleButton chaosFilterButton;
+    MainGuiToggleButton chaosDelayButton;
 
+    juce::Label autoDisplay;
+    juce::Label triggerDisplay;
     juce::Label midiChannelDisplay;
     juce::Label chaosFilterDisplay;
     juce::Label chaosDelayDisplay;
@@ -510,6 +531,7 @@ private:
     juce::Rectangle<int> getBackNForthLabelArea() const;
     juce::Rectangle<int> getMidiLabelArea() const;
     juce::Rectangle<int> getChaosLabelArea() const;
+    juce::Rectangle<int> getChaosDelayLabelArea() const;
     juce::Rectangle<int> getInfoIconArea() const;
     void updateInfoIconCache();
     bool refreshLegendTextCache();

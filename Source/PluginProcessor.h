@@ -230,6 +230,8 @@ public:
 	int  getMidiDelayMs() const noexcept;
 	void setAutoDelayMs (int delayMs);
 	int  getAutoDelayMs() const noexcept;
+	void setTriggerDelayMs (int delayMs);
+	int  getTriggerDelayMs() const noexcept;
 
 	void setUiIoExpanded (bool expanded);
 	bool getUiIoExpanded() const noexcept;
@@ -254,6 +256,7 @@ private:
 		static constexpr const char* midiPort         = "midiPort";
 		static constexpr const char* midiDelayMs      = "midiDelayMs";
 		static constexpr const char* autoDelayMs      = "autoDelayMs";
+		static constexpr const char* triggerDelayMs   = "triggerDelayMs";
 		static constexpr const char* ioExpanded       = "uiIoExpanded";
 		static constexpr std::array<const char*, 2> customPalette {
 			"uiCustomPalette0", "uiCustomPalette1"
@@ -304,9 +307,12 @@ private:
 	int   grainSizeTransitionSamplesRemaining_ = 0;
 	bool  grainSizeTransitionActive_ = false;
 	bool  prevTriggerState_   = false;    // edge-detect for TRIGGER toggle
+	bool  lastTriggerParamOn_ = false;
+	bool  delayedTriggerActive_ = false;
 	bool  lastAutoEnabled_    = false;
 	bool  syncedAutoDryFillActive_ = false;
 	float syncedAutoDryFillGain_ = 0.0f;
+	int   triggerDelayElapsedSamples_ = 0;
 
 	struct HostTransportMonitor
 	{
@@ -684,6 +690,7 @@ private:
 	std::atomic<int>   midiChannel        { 0 };
 	std::atomic<int>   midiDelayMs        { 0 };
 	std::atomic<int>   autoDelayMs        { 0 };
+	std::atomic<int>   triggerDelayMs     { 0 };
 	std::array<PendingMidiEvent, kPendingMidiEventCapacity> pendingMidiEvents_ {};
 	int pendingMidiEventCount_ = 0;
 
