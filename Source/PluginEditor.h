@@ -30,6 +30,7 @@ private:
 
     void openNumericEntryPopupForSlider (juce::Slider& s);
     void openMidiChannelPrompt();
+    void openAutoDelayPrompt();
     void openFilterPrompt();
     void openChaosConfigPrompt (const char* amtParamId, const char* spdParamId, const juce::String& title);
     void openChaosFilterPrompt();
