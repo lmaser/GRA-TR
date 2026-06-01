@@ -196,9 +196,13 @@ Enables automatic grain triggering. When active, grains are continuously relaunc
 
 When SYNC is active and the host provides musical position, AUTO aligns its scheduler to DAW transport/PPQ so loop replay stays deterministic.
 
+**AUTO Delay**: Right-click `AUTO` to open a `0-100 ms` delay prompt. This offsets the automatic capture/trigger later in time without changing the underlying TIME/SYNC/MIDI rate selection.
+
 ### TRG (Trigger)
 
 Manual trigger mode. When enabled, the grain buffer is frozen - no new audio is written - and grains loop the captured content indefinitely. This creates a freeze/sustain effect from any audio source.
+
+**TRG Delay**: Right-click `TRG` to open a `0-100 ms` delay prompt. This offsets the manual trigger/capture later in time without changing the frozen playback behaviour once armed.
 
 ### RVS (Reverse)
 
