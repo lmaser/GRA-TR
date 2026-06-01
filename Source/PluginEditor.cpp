@@ -3257,7 +3257,8 @@ void GRATRAudioProcessorEditor::openAutoDelayPrompt()
             label.setBounds (blockLeft, y, labelW, rowH);
             const int teX = blockLeft + labelW + labelGap;
             editor.setBounds (teX, y, editorW, rowH);
-            unitLabel.setBounds (teX + editorW + kUnitGapPx, y, unitW, rowH);
+            const int textRightX = teX + ((editorW - textW) / 2) + textW;
+            unitLabel.setBounds (textRightX + kUnitGapPx, y, unitW, rowH);
         };
 
         layoutRows = [aw, delayTe, delayLabel, delayUnitLabel, delayBar, layoutDelayRow]()
@@ -3528,7 +3529,8 @@ void GRATRAudioProcessorEditor::openTriggerDelayPrompt()
             label.setBounds (blockLeft, y, labelW, rowH);
             const int teX = blockLeft + labelW + labelGap;
             editor.setBounds (teX, y, editorW, rowH);
-            unitLabel.setBounds (teX + editorW + kUnitGapPx, y, unitW, rowH);
+            const int textRightX = teX + ((editorW - textW) / 2) + textW;
+            unitLabel.setBounds (textRightX + kUnitGapPx, y, unitW, rowH);
         };
 
         layoutRows = [aw, delayTe, delayLabel, delayUnitLabel, delayBar, layoutDelayRow]()
@@ -3872,7 +3874,8 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
             label.setBounds (blockLeft, y, labelW, rowH);
             const int teX = blockLeft + labelW + labelGap;
             editor.setBounds (teX, y, editorW, rowH);
-            unitLabel.setBounds (teX + editorW + kUnitGapPx, y, unitW, rowH);
+            const int textRightX = teX + ((editorW - textW) / 2) + textW;
+            unitLabel.setBounds (textRightX + kUnitGapPx, y, unitW, rowH);
         };
 
         layoutRows = [aw, channelTe, delayTe, channelLabel, delayLabel, delayUnitLabel, delayBar,
