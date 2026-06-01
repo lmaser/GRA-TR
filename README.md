@@ -19,7 +19,7 @@ GRA-TR uses a text-based UI with horizontal bar sliders. Core controls stay on t
 
 - **Bar sliders**: Click and drag horizontally. Right-click for numeric entry on continuous controls. STYLE is slider-only, and TIME does not open a generic numeric prompt while SYNC is active.
 - **Toggle buttons**: SYNC, MIDI, AUTO, TRG (trigger), RVS (reverse), BNF (Back N Forth). Click to enable/disable.
-- **Sub-labels**: Click the text next to MIDI to open the MIDI channel prompt.
+- **Sub-labels**: Click the text next to MIDI to open the MIDI prompt (`CHANNEL` + `DELAY`). Right-click `AUTO` to open the AUTO capture-delay prompt (`DELAY`).
 - **Collapsible INPUT/OUTPUT/MIX section**: Click the toggle bar (triangle) at the top of the slider area to swap between main parameters and the extended IO/routing controls: INPUT, OUTPUT, TILT, FILTER, PAN, MIX, LIM, MODE IN/OUT, SUM BUS, INV POL, INV STR, MIX MODE, and FILTER POS. The toggle bar stays fixed in place; only the arrow direction changes. State persists across sessions and preset changes.
 - **Filter bar**: Visible in the INPUT/OUTPUT/MIX section. Click to open the HP/LP filter configuration prompt with frequency, slope, and enable/disable controls for each filter.
 - **Gear icon** (top-right): Opens the info popup with version, credits, and a link to Graphics settings.
@@ -187,6 +187,8 @@ Example: A4 (440 Hz) -> 2.27 ms.
 **Velocity -> Glide**: Note velocity controls the portamento speed between pitch changes.
 
 **MIDI Channel**: Click the channel display to select channel 1-16, or OMNI (all channels).
+
+**MIDI Delay**: The same prompt also exposes `0-100 ms` of MIDI delay, shifting grain capture/trigger later relative to the incoming audio without changing the note-to-time mapping.
 
 ### AUTO
 

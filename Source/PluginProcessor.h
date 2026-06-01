@@ -228,6 +228,8 @@ public:
 	int  getMidiChannel() const noexcept;
 	void setMidiDelayMs (int delayMs);
 	int  getMidiDelayMs() const noexcept;
+	void setAutoDelayMs (int delayMs);
+	int  getAutoDelayMs() const noexcept;
 
 	void setUiIoExpanded (bool expanded);
 	bool getUiIoExpanded() const noexcept;
@@ -251,6 +253,7 @@ private:
 		static constexpr const char* crtEnabled       = "uiFxTailEnabled";
 		static constexpr const char* midiPort         = "midiPort";
 		static constexpr const char* midiDelayMs      = "midiDelayMs";
+		static constexpr const char* autoDelayMs      = "autoDelayMs";
 		static constexpr const char* ioExpanded       = "uiIoExpanded";
 		static constexpr std::array<const char*, 2> customPalette {
 			"uiCustomPalette0", "uiCustomPalette1"
@@ -680,6 +683,7 @@ private:
 	std::atomic<float> currentMidiFrequency { 0.0f };
 	std::atomic<int>   midiChannel        { 0 };
 	std::atomic<int>   midiDelayMs        { 0 };
+	std::atomic<int>   autoDelayMs        { 0 };
 	std::array<PendingMidiEvent, kPendingMidiEventCapacity> pendingMidiEvents_ {};
 	int pendingMidiEventCount_ = 0;
 

@@ -1327,6 +1327,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const bool midiEnabled = loadBoolParamOrDefault (midiParam, false);
 	const int midiDelaySamples = juce::jmax (0, (int) std::lround ((double) currentSampleRate
 		* (double) juce::jlimit (0, 100, getMidiDelayMs()) / 1000.0));
+	const int autoDelaySamples = juce::jmax (0, (int) std::lround ((double) currentSampleRate
+		* (double) juce::jlimit (0, 100, getAutoDelayMs()) / 1000.0));
 
 	if (midiEnabled && ! midiMessages.isEmpty())
 	{
@@ -1694,7 +1696,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (phasePpq <= boundaryTolerancePpq)
 		{
 			autoPhaseCounter_ = 0.0f;
-			return true;
+			return autoDelaySamples == 0;
 		}
 
 		const float phaseSamples = (float) ((phasePpq / syncedAutoPeriodPpq)
@@ -1788,6 +1790,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		logBnfDeterminismEvent (BnfDumpEvent::schedulerReset);
 		bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
 #endif
+	}
+	else if (autoJustEnabled)
+	{
+		autoPhaseCounter_ = 0.0f;
 	}
 	if (! canHostAlignSyncedAuto || (! reverseEnabled && ! backNForthEnabled))
 		syncedAutoDryFillActive_ = false;
@@ -1981,8 +1987,13 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 		if (autoEnabled)
 		{
-			// Unsynced AUTO starts immediately; synced AUTO follows host phase.
-			if (((autoJustEnabled && ! suppressImmediateAutoStart) || hostSyncedAutoLaunchAtBlockStart) && i == 0)
+			const float autoTriggerPhase = juce::jlimit (0.0f,
+			                                             juce::jmax (0.0f, smoothedGrainLen_ - 1.0f),
+			                                             (float) autoDelaySamples);
+
+			// Unsynced AUTO starts immediately when delay is 0; synced AUTO follows host phase.
+			if (((autoJustEnabled && ! suppressImmediateAutoStart) || hostSyncedAutoLaunchAtBlockStart) && i == 0
+				&& autoTriggerPhase <= 0.0f)
 			{
 				shouldLaunch = true;
 #if GRA_TR_BNF_DETERMINISM_DUMP
@@ -1990,10 +2001,21 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 #endif
 			}
 
+			const float prevAutoPhase = autoPhaseCounter_;
 			autoPhaseCounter_ += 1.0f;
+			bool wrappedAutoPhase = false;
 			if (autoPhaseCounter_ >= smoothedGrainLen_)
 			{
 				autoPhaseCounter_ -= smoothedGrainLen_;
+				wrappedAutoPhase = true;
+			}
+
+			const bool crossedAutoTrigger = (! wrappedAutoPhase)
+				? (prevAutoPhase < autoTriggerPhase && autoPhaseCounter_ >= autoTriggerPhase)
+				: (autoTriggerPhase > prevAutoPhase || autoTriggerPhase <= autoPhaseCounter_);
+
+			if (crossedAutoTrigger)
+			{
 				shouldLaunch = true;
 #if GRA_TR_BNF_DETERMINISM_DUMP
 				launchReason |= kBnfDumpReasonAutoPeriod;
@@ -2333,6 +2355,9 @@ void GRATRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 			const auto restoredDelay = apvts.state.getProperty (UiStateKeys::midiDelayMs);
 			if (! restoredDelay.isVoid())
 				midiDelayMs.store (juce::jlimit (0, 100, (int) restoredDelay), std::memory_order_relaxed);
+			const auto restoredAutoDelay = apvts.state.getProperty (UiStateKeys::autoDelayMs);
+			if (! restoredAutoDelay.isVoid())
+				autoDelayMs.store (juce::jlimit (0, 100, (int) restoredAutoDelay), std::memory_order_relaxed);
 		}
 	}
 }
@@ -2665,6 +2690,20 @@ int GRATRAudioProcessor::getMidiDelayMs() const noexcept
 	const auto fromState = apvts.state.getProperty (UiStateKeys::midiDelayMs);
 	if (! fromState.isVoid()) return juce::jlimit (0, 100, (int) fromState);
 	return midiDelayMs.load (std::memory_order_relaxed);
+}
+
+void GRATRAudioProcessor::setAutoDelayMs (int delayMsValue)
+{
+	const int clamped = juce::jlimit (0, 100, delayMsValue);
+	autoDelayMs.store (clamped, std::memory_order_relaxed);
+	apvts.state.setProperty (UiStateKeys::autoDelayMs, clamped, nullptr);
+}
+
+int GRATRAudioProcessor::getAutoDelayMs() const noexcept
+{
+	const auto fromState = apvts.state.getProperty (UiStateKeys::autoDelayMs);
+	if (! fromState.isVoid()) return juce::jlimit (0, 100, (int) fromState);
+	return autoDelayMs.load (std::memory_order_relaxed);
 }
 
 void GRATRAudioProcessor::setUiCustomPaletteColour (int index, juce::Colour colour)
