@@ -3302,6 +3302,7 @@ void GRATRAudioProcessorEditor::openAutoDelayPrompt()
             const juce::String text (delayValue);
             if (delayTe->getText() != text)
                 delayTe->setText (text, juce::dontSendNotification);
+            delayTe->selectAll();
             applyLiveAutoDelay (delayValue);
             if (layoutRows) layoutRows();
         };
@@ -3574,6 +3575,7 @@ void GRATRAudioProcessorEditor::openTriggerDelayPrompt()
             const juce::String text (delayValue);
             if (delayTe->getText() != text)
                 delayTe->setText (text, juce::dontSendNotification);
+            delayTe->selectAll();
             applyLiveTriggerDelay (delayValue);
             if (layoutRows) layoutRows();
         };
@@ -3928,6 +3930,7 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
             const juce::String text (delayValue);
             if (delayTe->getText() != text)
                 delayTe->setText (text, juce::dontSendNotification);
+            delayTe->selectAll();
             applyLiveMidiDelay (delayValue);
             if (layoutRows) layoutRows();
         };
