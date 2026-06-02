@@ -284,6 +284,7 @@ Modes:
 - Standard A440 tuning: `frequency = 440 * 2^((note - 69) / 12)`.
 - Monophonic last-note priority. Note-off falls back to the manual TIME knob value.
 - Channel filtering: OMNI (0) or specific channel (1-16).
+- `0-100 ms` MIDI delay available in the prompt, applied to note timing rather than grain-length mapping.
 - Priority: MIDI > SYNC > Manual TIME.
 
 ## Changelog
@@ -301,3 +302,4 @@ Modes:
 - Removed release-facing performance dump/debug instrumentation.
 - Normalised visible value formatting and prompt suffixes for TIME, dB controls, JIT, SMTH, MIX, LIM, and filter frequency input.
 - Normalised the JIT engine around a time-aware deterministic model while preserving grain-locked launch variation.
+- Added `0-100 ms` delay prompts for MIDI note timing, AUTO capture, and TRG activation.
