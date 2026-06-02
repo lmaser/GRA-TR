@@ -2398,6 +2398,8 @@ void GRATRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 			const auto restoredTriggerDelay = apvts.state.getProperty (UiStateKeys::triggerDelayMs);
 			if (! restoredTriggerDelay.isVoid())
 				triggerDelayMs.store (juce::jlimit (0, 100, (int) restoredTriggerDelay), std::memory_order_relaxed);
+			clearPendingMidiEvents();
+			clearMidiTrackingState();
 			prevTriggerState_ = false;
 			lastTriggerParamOn_ = false;
 			delayedTriggerActive_ = false;

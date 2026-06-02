@@ -3366,11 +3366,11 @@ void GRATRAudioProcessorEditor::openAutoDelayPrompt()
     juce::Label* delayLabel = nullptr;
     juce::Label* delayUnitLabel = nullptr;
     std::function<void()> layoutRows;
-    auto applyLiveAutoDelay = [proc = &audioProcessor, button = &autoButton] (int newDelayMs)
+    auto applyLiveAutoDelay = [proc = &audioProcessor, display = &autoDisplay] (int newDelayMs)
     {
         const int clamped = juce::jlimit (0, 100, newDelayMs);
         proc->setAutoDelayMs (clamped);
-        button->setTooltip (formatAutoDelayTooltip (clamped));
+        display->setTooltip (formatAutoDelayTooltip (clamped));
     };
 
     if (auto* delayTe = aw->getTextEditor ("delay"))
@@ -3639,11 +3639,11 @@ void GRATRAudioProcessorEditor::openTriggerDelayPrompt()
     juce::Label* delayLabel = nullptr;
     juce::Label* delayUnitLabel = nullptr;
     std::function<void()> layoutRows;
-    auto applyLiveTriggerDelay = [proc = &audioProcessor, button = &triggerButton] (int newDelayMs)
+    auto applyLiveTriggerDelay = [proc = &audioProcessor, display = &triggerDisplay] (int newDelayMs)
     {
         const int clamped = juce::jlimit (0, 100, newDelayMs);
         proc->setTriggerDelayMs (clamped);
-        button->setTooltip (formatTriggerDelayTooltip (clamped));
+        display->setTooltip (formatTriggerDelayTooltip (clamped));
     };
 
     if (auto* delayTe = aw->getTextEditor ("delay"))
