@@ -61,11 +61,6 @@ static juce::String formatTimeMsForDisplay (float ms, bool withLabel, bool compa
     return juce::String (ms, 3) + (compact ? "ms" : " ms") + suffix;
 }
 
-static juce::String formatFilterPromptFrequency (float hz)
-{
-    return juce::String (juce::roundToInt (juce::jlimit (20.0f, 20000.0f, hz)));
-}
-
 // ── Mod slider ↔ multiplier conversion (same as ECHO-TR) ──
 static constexpr double kModCenter  = 0.5;
 static constexpr double kModScale   = 3.0;
@@ -2895,12 +2890,12 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
     auto* lpBar = new PromptBar (scheme, freqToNorm (lpFreq), freqToNorm (GRATRAudioProcessor::kFilterLpFreqDefault));
     aw->addAndMakeVisible (lpBar);
 
-    auto* hpToggle = new juce::ToggleButton ("");
+    auto* hpToggle = new MainGuiToggleButton ("");
     hpToggle->setToggleState (hpOn, juce::dontSendNotification);
     hpToggle->setLookAndFeel (&lnf);
     aw->addAndMakeVisible (hpToggle);
 
-    auto* lpToggle = new juce::ToggleButton ("");
+    auto* lpToggle = new MainGuiToggleButton ("");
     lpToggle->setToggleState (lpOn, juce::dontSendNotification);
     lpToggle->setLookAndFeel (&lnf);
     aw->addAndMakeVisible (lpToggle);
@@ -3037,8 +3032,10 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
         std::function<juce::String (int)> toText;
         std::function<void()> push;
         std::shared_ptr<std::function<void()>> layout;
-        void mouseDown (const juce::MouseEvent&) override
+        void mouseDown (const juce::MouseEvent& e) override
         {
+            if (e.mods.isPopupMenu())
+                return;
             *val = (*val + 1) % 3;
             label->setText (toText (*val), juce::dontSendNotification);
             push();
@@ -3134,9 +3131,9 @@ void GRATRAudioProcessorEditor::openFilterPrompt()
     struct ToggleForwarder : public juce::MouseListener
     {
         juce::ToggleButton* toggle = nullptr;
-        void mouseDown (const juce::MouseEvent&) override
+        void mouseDown (const juce::MouseEvent& e) override
         {
-            if (toggle != nullptr)
+            if (! e.mods.isPopupMenu() && toggle != nullptr)
                 toggle->setToggleState (! toggle->getToggleState(), juce::sendNotification);
         }
     };
@@ -4026,7 +4023,6 @@ void GRATRAudioProcessorEditor::openMidiChannelPrompt()
             const int delayMs = juce::jlimit (0, 100, txt.getIntValue());
 
             constexpr int kMinEditorWidthPx = 24;
-            constexpr int kEditorInnerPadPx = 16;
             constexpr int kUnitGapPx = 4;
             const int baseLabelGap = juce::jmax (spaceW, 12);
 
@@ -4892,12 +4888,12 @@ void GRATRAudioProcessorEditor::openGraphicsPopup()
         return label;
     };
 
-    auto* defaultToggle = new juce::ToggleButton ("");
+    auto* defaultToggle = new MainGuiToggleButton ("");
     defaultToggle->setComponentID ("paletteDefaultToggle");
     aw->addAndMakeVisible (defaultToggle);
     auto* defaultLabel = addPopupLabel ("paletteDefaultLabel", "DFLT", labelFont);
 
-    auto* customToggle = new juce::ToggleButton ("");
+    auto* customToggle = new MainGuiToggleButton ("");
     customToggle->setComponentID ("paletteCustomToggle");
     aw->addAndMakeVisible (customToggle);
     auto* customLabel = addPopupLabel ("paletteCustomLabel", "CSTM", labelFont);
@@ -4919,7 +4915,7 @@ void GRATRAudioProcessorEditor::openGraphicsPopup()
         aw->addAndMakeVisible (custom);
     }
 
-    auto* fxToggle = new juce::ToggleButton ("");
+    auto* fxToggle = new MainGuiToggleButton ("");
     fxToggle->setComponentID ("fxToggle");
     fxToggle->setToggleState (crtEnabled, juce::dontSendNotification);
     fxToggle->onClick = [safeThis, fxToggle]()
@@ -5519,7 +5515,8 @@ void GRATRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 
     if (syncButton.isVisible() && getSyncLabelArea().contains (p))
     {
-        syncButton.setToggleState (! syncButton.getToggleState(), juce::sendNotificationSync);
+        if (! e.mods.isPopupMenu())
+            syncButton.setToggleState (! syncButton.getToggleState(), juce::sendNotificationSync);
         return;
     }
 
@@ -5543,13 +5540,15 @@ void GRATRAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 
     if (reverseButton.isVisible() && getReverseLabelArea().contains (p))
     {
-        reverseButton.setToggleState (! reverseButton.getToggleState(), juce::sendNotificationSync);
+        if (! e.mods.isPopupMenu())
+            reverseButton.setToggleState (! reverseButton.getToggleState(), juce::sendNotificationSync);
         return;
     }
 
     if (backNForthButton.isVisible() && getBackNForthLabelArea().contains (p))
     {
-        backNForthButton.setToggleState (! backNForthButton.getToggleState(), juce::sendNotificationSync);
+        if (! e.mods.isPopupMenu())
+            backNForthButton.setToggleState (! backNForthButton.getToggleState(), juce::sendNotificationSync);
         return;
     }
 
