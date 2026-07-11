@@ -20,6 +20,7 @@ public:
 	static constexpr const char* kParamTimeMs     = "time_ms";
 	static constexpr const char* kParamTimeSync   = "time_sync";
 	static constexpr const char* kParamMod        = "mod";
+	static constexpr const char* kParamModHarm    = "mod_harm";
 	static constexpr const char* kParamPitch      = "pitch";
 	static constexpr const char* kParamScan       = "scan";
 	static constexpr const char* kParamSmooth     = "smooth";
@@ -85,8 +86,11 @@ public:
 	static constexpr const char* kParamUiHeight   = "ui_height";
 	static constexpr const char* kParamUiPalette  = "ui_palette";
 	static constexpr const char* kParamUiCrt      = "ui_fx_tail";
+	static constexpr const char* kParamUiIoFx     = "ui_io_fx";
 	static constexpr const char* kParamUiColor0   = "ui_color0";
 	static constexpr const char* kParamUiColor1   = "ui_color1";
+	static constexpr const char* kParamUiColor2   = "ui_color2";
+	static constexpr const char* kParamUiColor3   = "ui_color3";
 
 	// Parameter ranges and defaults --------------------------------
 	static constexpr float kTimeMsMin     = 0.01f;
@@ -140,11 +144,10 @@ public:
 	static constexpr float kMixDefault = 1.0f;
 
 	// Mode In / Mode Out / Sum Bus
-	static constexpr int   kModeInOutDefault = 0;   // 0=L+R  1=MID  2=SIDE
+	static constexpr int   kModeInOutDefault = 0;   // 0=L+R  1=M/S  2=MID  3=SIDE
 	static constexpr int   kSumBusDefault    = 0;   // 0=ST   1=to M   2=to S
 	static constexpr int   kInvPolDefault    = 0;   // 0=NONE  1=WET  2=GLOBAL
 	static constexpr int   kInvStrDefault    = 0;   // 0=NONE  1=WET  2=GLOBAL
-	static constexpr float kSqrt2Over2       = 0.707106781f;
 
 	// Filter
 	static constexpr float kFilterFreqMin       = 20.0f;
@@ -223,6 +226,8 @@ public:
 
 	void setUiCrtEnabled (bool enabled);
 	bool getUiCrtEnabled() const noexcept;
+	void setUiIoFxEnabled (bool enabled);
+	bool getUiIoFxEnabled() const noexcept;
 
 	void setMidiChannel (int channel);
 	int  getMidiChannel() const noexcept;
@@ -238,6 +243,8 @@ public:
 
 	void setUiCustomPaletteColour (int index, juce::Colour colour);
 	juce::Colour getUiCustomPaletteColour (int index) const noexcept;
+	float getInputMeterPeak() const noexcept { return inputMeterPeak_.load (std::memory_order_relaxed); }
+	float getOutputMeterPeak() const noexcept { return outputMeterPeak_.load (std::memory_order_relaxed); }
 
 	juce::AudioProcessorValueTreeState apvts;
 	static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -253,13 +260,14 @@ private:
 		static constexpr const char* editorHeight     = "uiEditorHeight";
 		static constexpr const char* useCustomPalette = "uiUseCustomPalette";
 		static constexpr const char* crtEnabled       = "uiFxTailEnabled";
+		static constexpr const char* ioFxEnabled      = "uiIoFxEnabled";
 		static constexpr const char* midiPort         = "midiPort";
 		static constexpr const char* midiDelayMs      = "midiDelayMs";
 		static constexpr const char* autoDelayMs      = "autoDelayMs";
 		static constexpr const char* triggerDelayMs   = "triggerDelayMs";
 		static constexpr const char* ioExpanded       = "uiIoExpanded";
-		static constexpr std::array<const char*, 2> customPalette {
-			"uiCustomPalette0", "uiCustomPalette1"
+		static constexpr std::array<const char*, 4> customPalette {
+			"uiCustomPalette0", "uiCustomPalette1", "uiCustomPalette2", "uiCustomPalette3"
 		};
 	};
 
@@ -281,7 +289,8 @@ private:
 		float backNForthCellLenSamples = 1.0f;
 		float backNForthInvCellLenSamples = 1.0f;
 		float backNForthSourceCellLenSamples = 0.0f;
-		float readPos          = 0.0f;    // fractional read position within grain
+		float readPos          = 0.0f;    // fractional read position within source window
+		float playPos          = 0.0f;    // independent output/envelope phase
 		float fadeGain         = 0.0f;    // crossfade envelope (0->1 fade-in, 1->0 fade-out)
 		float pitchRatio       = 1.0f;    // locked pitch ratio at launch time
 		float smoothFraction   = 0.02f;   // locked taper/fade amount at launch time
@@ -292,10 +301,15 @@ private:
 		bool  active           = false;
 		bool  reverse          = false;   // play this grain backwards
 		bool  backNForth       = false;   // ping-pong inside this grain cycle
+		bool  fixedOlaWindow  = false;   // AUTO OLA uses a fixed window so SMOOTH cannot bend pitch
 	};
 
 	GrainVoice voiceA_[2];     // primary voice per channel
 	GrainVoice voiceB_[2];     // crossfade-out voice per channel
+
+	static constexpr int kAutoOlaVoiceCount = 3;
+	GrainVoice autoOla_[2][kAutoOlaVoiceCount]; // continuous AUTO retune voices
+	bool autoOlaReady_ = false;
 
 	// Auto-trigger phase accumulator (counts samples until next grain)
 	float autoPhaseCounter_   = 0.0f;
@@ -524,7 +538,7 @@ private:
 	static constexpr float kJitterFlutterRefMs = 250.0f;
 	static constexpr float kJitterFlutterDelayPower = 0.90f;
 	static constexpr float kJitterFlutterHighBoost = 0.08f;
-	static constexpr float kJitterLegacyDriftReferenceHz = 0.10f;
+	static constexpr float kJitterDriftReferenceHz = 0.10f;
 	static constexpr float kJitterSlowRateMinHz = 0.01f;
 	static constexpr float kJitterSlowRateMaxHz = 8.0f;
 	static constexpr float kJitterFastRateMaxHz = 7000.0f;
@@ -699,12 +713,16 @@ private:
 	std::atomic<int> uiEditorHeight { 752 };
 	std::atomic<int> uiUseCustomPalette { 0 };
 	std::atomic<int> uiCrtEnabled  { 0 };
-	std::atomic<juce::uint32> uiCustomPalette[2] {};
+	std::atomic<int> uiIoFxEnabled { 1 };
+	std::atomic<juce::uint32> uiCustomPalette[4] {};
+	std::atomic<float> inputMeterPeak_ { 0.0f };
+	std::atomic<float> outputMeterPeak_ { 0.0f };
 
 	// Raw parameter pointers (cached) ------------------------------
 	std::atomic<float>* timeMsParam   = nullptr;
 	std::atomic<float>* timeSyncParam = nullptr;
 	std::atomic<float>* modParam      = nullptr;
+	std::atomic<float>* modHarmParam = nullptr;
 	std::atomic<float>* pitchParam    = nullptr;
 	std::atomic<float>* scanParam     = nullptr;
 	std::atomic<float>* smoothParam   = nullptr;
@@ -750,7 +768,8 @@ private:
 	std::atomic<float>* uiHeightParam  = nullptr;
 	std::atomic<float>* uiPaletteParam = nullptr;
 	std::atomic<float>* uiCrtParam     = nullptr;
-	std::atomic<float>* uiColorParams[2] = { nullptr, nullptr };
+	std::atomic<float>* uiIoFxParam    = nullptr;
+	std::atomic<float>* uiColorParams[4] = { nullptr, nullptr, nullptr, nullptr };
 
 	// Inline chaos helpers (smooth S&H + Drift) -
 	// Generic smooth S&H + Drift chaos engine (per-sample advance)
@@ -993,7 +1012,7 @@ private:
 	                     bool backNForthGrain = false, int anchorOffsetSamples = 0,
 	                     float backNForthLegLenSamples = 0.0f, float pitchRatioScale = 1.0f,
 	                     float readBendDepthSamples = 0.0f, float readBendPhase = 0.0f,
-	                     float readBendPhaseStep = 0.0f);
+	                     float readBendPhaseStep = 0.0f, bool phaseAlignAuto = false);
 	float readGrainInterpolated (const GrainVoice& v, int ch) const;
 	float grainEnvelope (const GrainVoice& v) const;
 	void resetGranularSchedulersForDeterministicStart (bool reverseEnabled) noexcept;

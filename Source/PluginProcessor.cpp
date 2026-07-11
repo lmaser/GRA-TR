@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "../../TR-Shared/SimpleDSP/TRSimpleDSP.h"
 
 namespace
 {
@@ -17,8 +18,10 @@ namespace
 	constexpr float kGainSmoothCoeff = 0.9955f;
 	constexpr float kGainSmoothStep  = 1.0f - kGainSmoothCoeff;
 
-	// Minimum grain length in samples to avoid ultra-short grains that produce clicks
-	constexpr float kMinGrainSamples = 4.0f;
+	// Minimum grain length in samples to avoid ultra-short grains that produce clicks.
+	// The user can still reach very short times; this only prevents pathological
+	// read windows shorter than an interpolation kernel.
+	constexpr float kMinGrainSamples = 8.0f;
 
 	constexpr float kGrainSizeChangeMinRatio = 0.0025f;
 	constexpr float kGrainSizeChangeMinSamples = 4.0f;
@@ -45,6 +48,53 @@ namespace
 		return loadAtomicOrDefault (p, def ? 1.0f : 0.0f) > 0.5f;
 	}
 
+	inline float modSliderToLinearMultiplier (float v) noexcept
+	{
+		v = juce::jlimit (0.0f, 1.0f, v);
+		if (v < 0.5f)
+			return 1.0f / (4.0f - 6.0f * v);
+		return 1.0f + ((v - 0.5f) * 6.0f);
+	}
+
+	inline float smoothStep01 (float x) noexcept
+	{
+		x = juce::jlimit (0.0f, 1.0f, x);
+		return x * x * (3.0f - 2.0f * x);
+	}
+
+	inline float harmonicModStepToMultiplier (float step) noexcept
+	{
+		step = juce::jlimit (-8.0f, 8.0f, step);
+		return step >= 0.0f ? (1.0f + step) : (1.0f / (1.0f - step));
+	}
+
+	inline float modSliderToHarmonicMultiplier (float v) noexcept
+	{
+		const float pos = juce::jlimit (0.0f, 1.0f, v) * 16.0f - 8.0f;
+		const float transitionWidth = 0.08f;
+		const float centre = juce::jlimit (-8.0f, 8.0f, std::floor (pos + 0.5f));
+		const float delta = pos - centre;
+		float step = centre;
+
+		if (delta > 0.5f - transitionWidth && centre < 8.0f)
+		{
+			const float t = (delta - (0.5f - transitionWidth)) / transitionWidth;
+			step = centre + smoothStep01 (t);
+		}
+		else if (delta < -0.5f + transitionWidth && centre > -8.0f)
+		{
+			const float t = (delta + 0.5f) / transitionWidth;
+			step = (centre - 1.0f) + smoothStep01 (t);
+		}
+
+		return harmonicModStepToMultiplier (step);
+	}
+
+	inline float modSliderToEffectiveMultiplier (float v, bool harmonicMode) noexcept
+	{
+		return harmonicMode ? modSliderToHarmonicMultiplier (v)
+		                    : modSliderToLinearMultiplier (v);
+	}
 	inline void setParameterPlainValue (juce::AudioProcessorValueTreeState& apvts,
 	                                    const char* paramId, float plainValue)
 	{
@@ -62,7 +112,7 @@ namespace
 
 	inline float gainFaderDecibelsToGain (float dB) noexcept
 	{
-		return (dB <= GRATRAudioProcessor::kGainFloorDb) ? 0.0f : std::exp2 (dB * 0.16609640474f);
+		return TR::DSP::decibelsToGain (dB, GRATRAudioProcessor::kGainFloorDb);
 	}
 
 	inline juce::NormalisableRange<float> makeGainFaderRange() noexcept
@@ -211,6 +261,7 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	timeMsParam   = apvts.getRawParameterValue (kParamTimeMs);
 	timeSyncParam = apvts.getRawParameterValue (kParamTimeSync);
 	modParam      = apvts.getRawParameterValue (kParamMod);
+	modHarmParam = apvts.getRawParameterValue (kParamModHarm);
 	pitchParam    = apvts.getRawParameterValue (kParamPitch);
 	scanParam     = apvts.getRawParameterValue (kParamScan);
 	smoothParam   = apvts.getRawParameterValue (kParamSmooth);
@@ -256,8 +307,11 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	uiHeightParam  = apvts.getRawParameterValue (kParamUiHeight);
 	uiPaletteParam = apvts.getRawParameterValue (kParamUiPalette);
 	uiCrtParam     = apvts.getRawParameterValue (kParamUiCrt);
+	uiIoFxParam    = apvts.getRawParameterValue (kParamUiIoFx);
 	uiColorParams[0] = apvts.getRawParameterValue (kParamUiColor0);
 	uiColorParams[1] = apvts.getRawParameterValue (kParamUiColor1);
+	uiColorParams[2] = apvts.getRawParameterValue (kParamUiColor2);
+	uiColorParams[3] = apvts.getRawParameterValue (kParamUiColor3);
 
 	const int w = loadIntParamOrDefault (uiWidthParam, 360);
 	const int h = loadIntParamOrDefault (uiHeightParam, 752);
@@ -514,7 +568,10 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	{
 		voiceA_[ch] = {};
 		voiceB_[ch] = {};
+		for (auto& voice : autoOla_[ch])
+			voice = {};
 	}
+	autoOlaReady_ = false;
 	autoPhaseCounter_ = 0.0f;
 	targetGrainLen_   = 0.0f;
 	smoothedGrainLen_ = 0.0f;
@@ -830,12 +887,12 @@ float GRATRAudioProcessor::advanceJitterEngine (JitterEngine& engine, float slow
 		juce::jmax (kJitterSlowRateMinHz, maxSlowRateHz), slowRateHz);
 	const float slowRateA = juce::jlimit (kJitterSlowRateMinHz,
 		juce::jmax (kJitterSlowRateMinHz, maxSlowRateHz),
-		safeSlowRateHz * juce::jmax (kJitterLegacyDriftReferenceHz,
-		                              engine.driftRateHzA / kJitterLegacyDriftReferenceHz));
+		safeSlowRateHz * juce::jmax (kJitterDriftReferenceHz,
+		                              engine.driftRateHzA / kJitterDriftReferenceHz));
 	const float slowRateB = juce::jlimit (kJitterSlowRateMinHz,
 		juce::jmax (kJitterSlowRateMinHz, maxSlowRateHz),
-		safeSlowRateHz * juce::jmax (kJitterLegacyDriftReferenceHz,
-		                              engine.driftRateHzB / kJitterLegacyDriftReferenceHz));
+		safeSlowRateHz * juce::jmax (kJitterDriftReferenceHz,
+		                              engine.driftRateHzB / kJitterDriftReferenceHz));
 
 	engine.driftPhaseA = wrapPhase (engine.driftPhaseA + slowRateA / sr);
 	engine.driftPhaseB = wrapPhase (engine.driftPhaseB + slowRateB / sr);
@@ -1121,7 +1178,7 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float s
                                           bool backNForthGrain, int anchorOffsetSamples,
                                           float backNForthLegLenSamples, float pitchRatioScale,
                                           float readBendDepthSamples, float readBendPhase,
-                                          float readBendPhaseStep)
+                                          float readBendPhaseStep, bool phaseAlignAuto)
 {
 	const int wrapMask = grainBufferLength - 1;
 
@@ -1153,17 +1210,98 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float s
 	v.reverse = reverseGrain;
 	v.pitchRatio = smoothedPitchRatio_ * juce::jlimit (0.25f, 4.0f, pitchRatioScale);
 	v.smoothFraction = grainSmoothFraction_;
+	if (reverseGrain && ! backNForthGrain)
+	{
+		// Reverse exposes grain boundaries more than forward playback because each
+		// capture starts from the newest sample and then walks backward. Give it a
+		// stronger window only in RVS, especially at short times.
+		const float grainMs = grainLenSamples * 1000.0f / juce::jmax (1.0f, (float) currentSampleRate);
+		const float reverseShort = smoothStep01 ((160.0f - grainMs) / 130.0f);
+		v.smoothFraction = juce::jmax (v.smoothFraction, 0.22f + 0.50f * reverseShort);
+	}
 	v.jitterReadBendDepthSamples = juce::jlimit (0.0f, 2.0f, readBendDepthSamples);
 	v.jitterReadBendPhase = readBendPhase;
 	v.jitterReadBendPhaseStep = juce::jlimit (0.0f, 0.02f, readBendPhaseStep);
 
-	const float anchorLenSamples = backNForthGrain ? v.sourceLenSamples : grainLenSamples;
+	const float anchorLenSamples = backNForthGrain ? v.sourceLenSamples : juce::jmax (v.sourceLenSamples, grainLenSamples);
+
+	// AUTO retune path: align the new capture to the outgoing grain by local
+	// waveform similarity. This is a lightweight WSOLA-style correction: for
+	// clean low-frequency material it avoids each AUTO window fighting the
+	// previous phase, while TRIGGER/RVS/BNF keep their older creative behaviour.
+	int alignedAnchorOffset = anchorOffsetSamples;
+	if (phaseAlignAuto && ! reverseGrain && ! backNForthGrain && voiceB_[ch].active
+	    && ! voiceB_[ch].reverse && ! voiceB_[ch].backNForth && grainBufferLength > 8)
+	{
+		const auto* buf = grainBuffer.getReadPointer (ch);
+		auto readAbsolute = [&] (float pos) noexcept
+		{
+			while (pos < 0.0f)
+				pos += (float) grainBufferLength;
+			while (pos >= (float) grainBufferLength)
+				pos -= (float) grainBufferLength;
+
+			const int idx0  = ((int) pos) & wrapMask;
+			const int idxM1 = (idx0 + wrapMask) & wrapMask;
+			const int idx1  = (idx0 + 1) & wrapMask;
+			const int idx2  = (idx0 + 2) & wrapMask;
+			const float frac = pos - std::floor (pos);
+			return hermite4pt (buf[idxM1], buf[idx0], buf[idx1], buf[idx2], frac);
+		};
+
+		const GrainVoice& outgoing = voiceB_[ch];
+		const float baseAnchor = (float) (grainBufferWritePos - (int) anchorLenSamples + anchorOffsetSamples);
+		const float outgoingStart = (float) outgoing.anchorWritePos + outgoing.readPos;
+		const int maxRadiusBySource = (int) juce::jmax (4.0f, juce::jmin (v.sourceLenSamples, outgoing.sourceLenSamples) * 0.33f);
+		const int searchRadius = juce::jlimit (4, maxRadiusBySource,
+			(int) std::lround ((float) currentSampleRate * 0.012f));
+		const int analysisSamples = juce::jlimit (16, 256,
+			(int) std::lround (juce::jmin (juce::jmin (v.sourceLenSamples, outgoing.sourceLenSamples) * 0.20f,
+			                                  (float) currentSampleRate * 0.006f)));
+
+		float bestScore = -1.0e30f;
+		int bestDelta = 0;
+		auto evaluateDelta = [&] (int delta) noexcept
+		{
+			float xy = 0.0f, xx = 0.0f, yy = 0.0f;
+			for (int n = 0; n < analysisSamples; ++n)
+			{
+				const float nf = (float) n;
+				const float x = readAbsolute (baseAnchor + (float) delta + nf * v.pitchRatio);
+				const float y = readAbsolute (outgoingStart + nf * outgoing.pitchRatio);
+				xy += x * y;
+				xx += x * x;
+				yy += y * y;
+			}
+
+			const float denom = std::sqrt (juce::jmax (1.0e-12f, xx * yy));
+			const float corr = xy / denom;
+			const float distancePenalty = 0.015f * ((float) std::abs (delta) / (float) juce::jmax (1, searchRadius));
+			const float score = corr - distancePenalty;
+			if (score > bestScore)
+			{
+				bestScore = score;
+				bestDelta = delta;
+			}
+		};
+
+		const int coarseStep = juce::jmax (1, searchRadius / 24);
+		for (int delta = -searchRadius; delta <= searchRadius; delta += coarseStep)
+			evaluateDelta (delta);
+		const int refineStart = juce::jmax (-searchRadius, bestDelta - coarseStep);
+		const int refineEnd = juce::jmin (searchRadius, bestDelta + coarseStep);
+		for (int delta = refineStart; delta <= refineEnd; ++delta)
+			evaluateDelta (delta);
+
+		alignedAnchorOffset += bestDelta;
+	}
 
 	// BNF anchors one leg of source audio; the second leg reads the same window backward.
-	v.anchorWritePos = (grainBufferWritePos - (int) anchorLenSamples + anchorOffsetSamples) & wrapMask;
+	v.anchorWritePos = (grainBufferWritePos - (int) anchorLenSamples + alignedAnchorOffset) & wrapMask;
 
-	// Read position always starts at 0; reverse mapping is handled in readGrainInterpolated
+	// Read and play phases are independent: PITCH changes read speed, not grain lifetime.
 	v.readPos = 0.0f;
+	v.playPos = 0.0f;
 	v.fadeGain = 0.0f;  // will fade in
 
 #if GRA_TR_BNF_DETERMINISM_DUMP
@@ -1298,28 +1436,38 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 		return 0.0f;
 
 	// Guard: readPos past grain boundary -> envelope is zero
-	if (v.readPos >= v.grainLenSamples || v.readPos < 0.0f)
+	if (v.playPos >= v.grainLenSamples || v.playPos < 0.0f)
 		return 0.0f;
 
-	// Tukey-windowed envelope with configurable taper fraction
-	const float pos = (v.backNForth || ! v.reverse) ? v.readPos : (v.grainLenSamples - v.readPos);
+	// Tukey/Hann hybrid envelope. Long grains keep the familiar plateau; short
+	// grains progressively become full-window Hann to avoid tonal AM/decimating.
+	const float pos = juce::jlimit (0.0f, v.grainLenSamples, v.playPos);
 	const float remaining = v.grainLenSamples - pos;
+	const float grainMs = v.grainLenSamples * 1000.0f / juce::jmax (1.0f, (float) currentSampleRate);
+	const float shortBlend = smoothStep01 ((85.0f - grainMs) / 65.0f);
+	const float reverseBlend = (v.reverse && ! v.backNForth) ? smoothStep01 ((150.0f - grainMs) / 120.0f) : 0.0f;
+	const float windowBlend = v.fixedOlaWindow ? 1.0f : juce::jmax (shortBlend, reverseBlend * 0.95f);
 
-	// Taper length: fraction of grain used for fade-in/out (from SMOOTH)
-	// Minimum must cover at least 2x the pitch ratio step so the fade-out
-	// zone can't be entirely skipped in a single read advance.
-	// Cap to 40% of grain so both tapers (in+out) never exceed 80% - the
-	// envelope always reaches full amplitude even on very short grains.
-	const float minTaper = juce::jmax (2.0f, v.pitchRatio * 2.0f);
-	const float maxTaper = juce::jmax (2.0f, v.grainLenSamples * 0.4f);
+	// Taper length: minimum covers read-step skips; short grains can safely use
+	// half-window tapers because the Hann blend preserves a smooth derivative.
+	const float minTaper = juce::jmax (3.0f, v.pitchRatio * 3.0f);
+	const float maxTaper = juce::jmax (minTaper, v.grainLenSamples * (0.40f + 0.10f * windowBlend));
+	const float reverseTaperFloor = (v.reverse && ! v.backNForth)
+		? v.grainLenSamples * (0.18f + 0.22f * reverseBlend)
+		: minTaper;
 	const float taperLen = juce::jmin (maxTaper,
-	                                   juce::jmax (minTaper, v.smoothFraction * v.grainLenSamples * 0.5f));
+	                                   juce::jmax (juce::jmax (minTaper, reverseTaperFloor),
+	                                                v.smoothFraction * v.grainLenSamples * 0.5f));
 
+	float tukey = 1.0f;
 	if (pos < taperLen)
-		return taperWeight (pos, taperLen);
-	if (remaining < taperLen)
-		return taperWeight (remaining, taperLen);
-	return 1.0f;
+		tukey = taperWeight (pos, taperLen);
+	else if (remaining < taperLen)
+		tukey = taperWeight (remaining, taperLen);
+
+	const float phase = juce::jlimit (0.0f, 1.0f, pos / juce::jmax (1.0f, v.grainLenSamples));
+	const float hann = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * phase);
+	return tukey + (hann - tukey) * windowBlend;
 }
 
 //==============================================================================
@@ -1329,6 +1477,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	const int numChannels = juce::jmin (buffer.getNumChannels(), 2);
 	const int numSamples  = buffer.getNumSamples();
+	float inputMeterPeak = 0.0f;
 
 	// MIDI note tracking -------------------------------------------
 	const bool midiEnabled = loadBoolParamOrDefault (midiParam, false);
@@ -1406,7 +1555,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		triggerDelayElapsedSamples_ = 0;
 	}
 
-	const bool triggerEnabled = delayedTriggerActive_ || midiNoteActive;
+	const bool triggerEnabled = delayedTriggerActive_ || (midiNoteActive && ! autoEnabled);
 	const int  mode           = loadIntParamOrDefault (modeParam, 1);
 
 	juce::Optional<juce::AudioPlayHead::PositionInfo> hostPosition;
@@ -1416,6 +1565,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	const float timeMsValue  = loadAtomicOrDefault (timeMsParam, kTimeMsDefault);
 	const float modValue     = loadAtomicOrDefault (modParam, kModDefault);
+	const bool modHarm = loadBoolParamOrDefault (modHarmParam, false);
 	const float pitchSemi    = loadAtomicOrDefault (pitchParam, kPitchDefault);
 	const float scanPercent  = loadAtomicOrDefault (scanParam, kScanDefault);
 	const float jitterTarget = juce::jlimit (kJitterMin, kJitterMax,
@@ -1455,13 +1605,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	currentPitchRatio_   = std::exp2 (pitchSemi / 12.0f);
 	currentScanRatio_    = std::exp2 (scanPercent / 100.0f);
 
-	// MOD frequency multiplier (hyperbolic below centre, linear above - same as ECHO-TR)
-	// 0.0 -> x0.25, 0.5 -> x1.0, 1.0 -> x4.0
-	float modFreqMultiplier;
-	if (modValue < 0.5f)
-		modFreqMultiplier = 1.0f / (4.0f - 6.0f * modValue);
-	else
-		modFreqMultiplier = 1.0f + ((modValue - 0.5f) * 6.0f);
+	const float modFreqMultiplier = modSliderToEffectiveMultiplier (modValue, modHarm);
 
 	double hostBpm = 120.0;
 	if (hostPosition.hasValue() && hostPosition->getBpm().hasValue())
@@ -1546,13 +1690,18 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	targetGrainLen_ = effectiveGrainLen;
 
-	// SMOOTH: shared taper amount for forward and reverse grain playback.
+	// SMOOTH: shared taper amount for forward/reverse playback. Short grains
+	// need a non-negotiable OLA floor; otherwise tonal material exposes the
+	// window boundaries as AM/decimating even when interpolation is clean.
 	const float smoothPct = juce::jlimit (0.0f, 1.0f,
 		loadAtomicOrDefault (smoothParam, kSmoothDefault) * 0.01f);
 	const float baseGrainSmoothFraction = 0.02f + smoothPct * 0.98f;
-	grainSmoothFraction_ = grainSizeTransitionActive_
-		? juce::jmax (baseGrainSmoothFraction, kGrainSizeTransitionSmoothFloor)
-		: baseGrainSmoothFraction;
+	const float effectiveGrainMs = effectiveGrainLen * 1000.0f / juce::jmax (1.0f, (float) currentSampleRate);
+	const float shortGrainBlend = smoothStep01 ((90.0f - effectiveGrainMs) / 70.0f);
+	const float transparentShortFloor = 0.10f + 0.34f * shortGrainBlend;
+	float grainSmoothFloor = juce::jmax (transparentShortFloor,
+		grainSizeTransitionActive_ ? kGrainSizeTransitionSmoothFloor : 0.0f);
+	grainSmoothFraction_ = juce::jlimit (0.02f, 1.0f, juce::jmax (baseGrainSmoothFraction, grainSmoothFloor));
 
 	// Load filter / tilt / chaos per-block -------------------------
 	wetFilterHpOn_ = loadBoolParamOrDefault (filterHpOnParam, false);
@@ -1732,6 +1881,10 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			voice = {};
 		for (auto& voice : voiceB_)
 			voice = {};
+		for (auto& channelVoices : autoOla_)
+			for (auto& voice : channelVoices)
+				voice = {};
+		autoOlaReady_ = false;
 	};
 	if (hostTransport_.deterministicResetCandidate)
 	{
@@ -1766,6 +1919,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	// Detect AUTO enable edge (launch immediately on enable) ------
 	const bool autoJustEnabled = autoEnabled && !lastAutoEnabled_;
+	if (autoJustEnabled || ! autoEnabled)
+		autoOlaReady_ = false;
 	lastAutoEnabled_ = autoEnabled;
 	bool suppressImmediateAutoStart = false;
 	if (autoJustEnabled && canHostAlignSyncedAuto)
@@ -1844,7 +1999,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		runtimeMidiVelocity = lastMidiVelocity.load (std::memory_order_relaxed);
 		runtimeMidiFrequency = currentMidiFrequency.load (std::memory_order_relaxed);
 		runtimeMidiNoteActive = midiEnabled && (runtimeMidiNote >= 0);
-		runtimeTriggerEnabled = runtimeManualTriggerActive || runtimeMidiNoteActive;
+		runtimeTriggerEnabled = runtimeManualTriggerActive || (runtimeMidiNoteActive && ! autoEnabled);
 		runtimeTargetGrainMs = timeMsValue;
 
 		if (runtimeMidiNoteActive)
@@ -1931,11 +2086,14 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			}
 		}
 
-		const bool currentTriggerState = runtimeManualTriggerActive || runtimeMidiNoteActive;
+		const bool currentTriggerState = runtimeManualTriggerActive || (runtimeMidiNoteActive && ! autoEnabled);
 		runtimeTriggerEdge = currentTriggerState && ! runtimePrevTriggerState;
 		runtimePrevTriggerState = currentTriggerState;
 		runtimeTriggerEnabled = currentTriggerState;
 		runtimeEffectiveMixTarget = (!autoEnabled && !runtimeTriggerEnabled) ? 0.0f : mixValue;
+		const bool continuousOlaRetuneMode = autoEnabled && ! runtimeTriggerEnabled && ! backNForthEnabled;
+		if (! continuousOlaRetuneMode)
+			autoOlaReady_ = false;
 
 		// S&H chaos advance
 		if (chaosDelayEnabled_) advanceChaosD();
@@ -1973,11 +2131,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		const float backNForthCellLen = backNForthEventLen / (float) backNForthCellCount;
 		const float launchBackNForthLegLen = backNForthEnabled ? backNForthCellLen * 0.5f : 0.0f;
 		const float launchGrainLen = backNForthEnabled ? backNForthEventLen : captureLen;
-		const float backNForthPitchSpanScale = backNForthEnabled
+		const float sourcePitchSpanScale = backNForthEnabled
 			? juce::jmax (1.0f, smoothedPitchRatio_ * 0.5f)
-			: 1.0f;
+			: juce::jmax (1.0f, smoothedPitchRatio_);
 		const float launchSourceLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
-		                                            captureLen * backNForthPitchSpanScale);
+		                                            captureLen * sourcePitchSpanScale);
 		if (jitterTarget > 1.0e-5f || jitterSmoothed_ > 1.0e-5f)
 			advanceJitterEngines (jitterSmoothed_, launchSourceLen);
 
@@ -1994,13 +2152,15 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		float inL = (channelL != nullptr) ? channelL[i] * smoothedInputGain : 0.0f;
 		float inR = (channelR != nullptr) ? channelR[i] * smoothedInputGain : inL;
 
-		// Mode In: M/S encode input
-		if (numChannels >= 2 && modeInVal != 0)
+		// Mode In: 0=L+R, 1=M/S, 2=MID, 3=SIDE
+		if (numChannels >= 2)
 		{
-			const float l = inL, r = inR;
-			if (modeInVal == 1)      { const float mid  = (l + r) * kSqrt2Over2; inL = inR = mid; }
-			else /* modeInVal==2 */   { const float side = (l - r) * kSqrt2Over2; inL = inR = side; }
+			const auto routedIn = TR::DSP::applyModeIn ({ inL, inR },
+			                                             TR::DSP::channelModeFromInt (modeInVal));
+			inL = routedIn.l;
+			inR = routedIn.r;
 		}
+		TR::DSP::observePeak (inputMeterPeak, { inL, inR });
 
 		// PRE filter/tilt: apply before grain capture
 		if (filterPre_) filterWetSample (inL, inR);
@@ -2020,15 +2180,15 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		int launchReason = kBnfDumpReasonNone;
 #endif
 
-		if (autoEnabled)
+		if (autoEnabled && ! continuousOlaRetuneMode)
 		{
+			const float autoPeriod = juce::jmax (kMinGrainSamples, smoothedGrainLen_);
 			const float autoTriggerPhase = juce::jlimit (0.0f,
-			                                             juce::jmax (0.0f, smoothedGrainLen_ - 1.0f),
+			                                             juce::jmax (0.0f, autoPeriod - 1.0f),
 			                                             (float) autoDelaySamples);
 
-			// Unsynced AUTO starts immediately when delay is 0; synced AUTO follows host phase.
-			if (((autoJustEnabled && ! suppressImmediateAutoStart) || hostSyncedAutoLaunchAtBlockStart) && i == 0
-				&& autoTriggerPhase <= 0.0f)
+			// Unsynced AUTO starts immediately; synced AUTO follows host phase.
+			if (((autoJustEnabled && ! suppressImmediateAutoStart) || hostSyncedAutoLaunchAtBlockStart) && i == 0)
 			{
 				shouldLaunch = true;
 #if GRA_TR_BNF_DETERMINISM_DUMP
@@ -2077,10 +2237,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			                             int baseAnchorOffset, float basePitchScale)
 			{
 				const auto jit = makeJitterLaunchValues (ch, mode, sourceLen);
+				const bool phaseAlign = autoEnabled && ! runtimeTriggerEnabled && ! launchReverse && ! backNForthEnabled;
 				launchNewGrain (ch, grainLen, jit.sourceLenSamples, launchReverse,
 				                backNForthEnabled, baseAnchorOffset + jit.anchorOffsetSamples,
 				                launchBackNForthLegLen, basePitchScale * jit.pitchScale,
-				                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep);
+				                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep, phaseAlign);
 			};
 
 #if GRA_TR_BNF_DETERMINISM_DUMP
@@ -2093,12 +2254,13 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			if (mode == 0) // MONO: same grain for both channels
 			{
 				const auto jit = makeJitterLaunchValues (0, mode, launchSourceLen);
+				const bool phaseAlign = autoEnabled && ! runtimeTriggerEnabled && ! launchReverse && ! backNForthEnabled;
 				launchNewGrain (0, launchGrainLen, jit.sourceLenSamples, launchReverse, backNForthEnabled,
 				                jit.anchorOffsetSamples, launchBackNForthLegLen, jit.pitchScale,
-				                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep);
+				                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep, phaseAlign);
 				launchNewGrain (1, launchGrainLen, jit.sourceLenSamples, launchReverse, backNForthEnabled,
 				                jit.anchorOffsetSamples, launchBackNForthLegLen, jit.pitchScale,
-				                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep);
+				                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep, phaseAlign);
 				// Sync voice anchors for mono
 				voiceA_[1].anchorWritePos = voiceA_[0].anchorWritePos;
 			}
@@ -2130,6 +2292,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		auto advanceVoiceRead = [] (GrainVoice& voice, float step) noexcept
 		{
 			voice.readPos += step;
+			voice.playPos += 1.0f;
 			if (voice.jitterReadBendDepthSamples > 0.0f && voice.jitterReadBendPhaseStep > 0.0f)
 			{
 				voice.jitterReadBendPhase += voice.jitterReadBendPhaseStep;
@@ -2138,9 +2301,96 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			}
 		};
 
-		for (int ch = 0; ch < 2; ++ch)
+		if (continuousOlaRetuneMode)
+		{
+			// AUTO retune needs overlap stability more than literal sub-5 ms
+			// windows. Below that point the window itself becomes the audible
+			// oscillator/decimator, so keep the internal OLA window musical and
+			// let the front-panel TIME/MOD continue to shape retune pressure.
+			const float autoOlaMinLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
+			                                         (float) currentSampleRate * 0.005f);
+			const float autoOlaGrainLen = juce::jmax (launchGrainLen, autoOlaMinLen);
+			const float autoOlaSourceLen = juce::jmax (launchSourceLen, autoOlaGrainLen);
+			auto configureAutoOlaVoice = [&] (int ch, int voiceIndex, float phase01)
+			{
+				GrainVoice& v = autoOla_[ch][voiceIndex];
+				const bool rightDual = (mode == 3 && ch == 1);
+				const float pitchScale = rightDual ? 0.5f : 1.0f;
+				const float voicePitchRatio = smoothedPitchRatio_ * pitchScale;
+				const float minSourceForPitch = autoOlaGrainLen * juce::jmax (1.0f, voicePitchRatio);
+				const float srcLenBase = juce::jmax (rightDual ? autoOlaSourceLen * 0.5f : autoOlaSourceLen, minSourceForPitch);
+				const auto jit = makeJitterLaunchValues (ch, mode, srcLenBase);
+				const float srcLen = juce::jmax (jit.sourceLenSamples, minSourceForPitch);
+				const int stereoOffset = ((mode == 2 || mode == 3) && ch == 1) ? - (int) (srcLen * 0.5f) : 0;
+
+				v = {};
+				v.grainLenSamples = juce::jmax (kMinGrainSamples, autoOlaGrainLen);
+				v.sourceLenSamples = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2), srcLen);
+				v.backNForth = false;
+				v.backNForthLegLenSamples = v.grainLenSamples;
+				v.backNForthCellLenSamples = juce::jmax (1.0f, v.grainLenSamples * 2.0f);
+				v.backNForthInvCellLenSamples = 1.0f / v.backNForthCellLenSamples;
+				v.backNForthCellCount = 1;
+				v.backNForthSourceCellLenSamples = v.sourceLenSamples;
+				v.active = true;
+				v.reverse = reverseEnabled;
+				v.fixedOlaWindow = true;
+				v.pitchRatio = voicePitchRatio * jit.pitchScale;
+				v.smoothFraction = 1.0f;
+				v.playPos = juce::jlimit (0.0f, juce::jmax (0.0f, v.grainLenSamples - 1.0f),
+				                         v.grainLenSamples * phase01);
+				v.readPos = juce::jlimit (0.0f, juce::jmax (0.0f, v.sourceLenSamples - 1.0f),
+				                         v.playPos * v.pitchRatio);
+				v.fadeGain = 1.0f;
+				v.jitterReadBendDepthSamples = juce::jlimit (0.0f, 2.0f, jit.readBendDepthSamples);
+				v.jitterReadBendPhase = jit.readBendPhase;
+				v.jitterReadBendPhaseStep = juce::jlimit (0.0f, 0.02f, jit.readBendPhaseStep);
+				v.anchorWritePos = (grainBufferWritePos - (int) v.sourceLenSamples + stereoOffset + jit.anchorOffsetSamples) & wrapMask;
+			};
+
+			if (! autoOlaReady_)
+			{
+				for (int ch = 0; ch < 2; ++ch)
+					for (int v = 0; v < kAutoOlaVoiceCount; ++v)
+						configureAutoOlaVoice (ch, v, (float) v / (float) kAutoOlaVoiceCount);
+				autoOlaReady_ = true;
+				for (auto& voice : voiceA_) voice = {};
+				for (auto& voice : voiceB_) voice = {};
+			}
+
+			for (int ch = 0; ch < 2; ++ch)
+			{
+				float wet = 0.0f;
+				float wetWeight = 0.0f;
+				for (int vIndex = 0; vIndex < kAutoOlaVoiceCount; ++vIndex)
+				{
+					auto& voice = autoOla_[ch][vIndex];
+					if (! voice.active)
+						configureAutoOlaVoice (ch, vIndex, (float) vIndex / (float) kAutoOlaVoiceCount);
+
+					const float env = grainEnvelope (voice);
+					if (env > 0.000001f)
+					{
+						wet += readGrainInterpolated (voice, (mode == 0) ? 0 : ch) * env;
+						wetWeight += env;
+					}
+
+					advanceVoiceRead (voice, voice.pitchRatio);
+					while (voice.playPos >= voice.grainLenSamples)
+					{
+						const float phase = (voice.playPos - voice.grainLenSamples) / juce::jmax (1.0f, voice.grainLenSamples);
+						configureAutoOlaVoice (ch, vIndex, juce::jlimit (0.0f, 0.95f, phase));
+					}
+				}
+				const float out = wetWeight > 0.0001f ? wet / wetWeight : 0.0f;
+				if (ch == 0) wetL = out;
+				else         wetR = out;
+			}
+		}
+		else for (int ch = 0; ch < 2; ++ch)
 		{
 			float wet = 0.0f;
+			float wetWeight = 0.0f;
 
 			// Voice A (primary, fading in)
 			if (voiceA_[ch].active)
@@ -2150,14 +2400,36 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 				// Crossfade: fade-in using the grain's own locked length, so
 				// TIME changes after launch do not alter the entry slope mid-grain.
-				voiceA_[ch].fadeGain = juce::jmin (1.0f, voiceA_[ch].fadeGain + (1.0f / juce::jmax (1.0f, voiceA_[ch].grainLenSamples * voiceA_[ch].smoothFraction * 0.5f)));
-				wet += sample * env * voiceA_[ch].fadeGain;
+				const float fadeInSamples = juce::jmax (1.0f, voiceA_[ch].grainLenSamples * voiceA_[ch].smoothFraction * 0.5f);
+				voiceA_[ch].fadeGain = juce::jmin (1.0f, voiceA_[ch].fadeGain + (1.0f / fadeInSamples));
+				const float fadeA = std::sin (voiceA_[ch].fadeGain * juce::MathConstants<float>::halfPi);
+				const float weightA = env * fadeA;
+				wet += sample * weightA;
+				wetWeight += weightA;
 
 				// Advance read position (always forward; reverse mapping in readGrainInterpolated)
 				advanceVoiceRead (voiceA_[ch], voiceA_[ch].backNForth ? 1.0f : voiceA_[ch].pitchRatio);
-				if (voiceA_[ch].readPos >= voiceA_[ch].grainLenSamples || voiceA_[ch].readPos < 0.0f)
+				const bool canRelaunchVoice = autoEnabled || runtimeTriggerEnabled;
+				const bool autoRetuneRelaunch = autoEnabled && ! runtimeTriggerEnabled && ! reverseEnabled && ! backNForthEnabled;
+				const bool reverseAutoRelaunch = autoEnabled && reverseEnabled && ! backNForthEnabled;
+				const bool midiExactPeriodRelaunch = runtimeMidiNoteActive && ! autoEnabled && ! runtimeManualTriggerActive && ! backNForthEnabled;
+				const float voiceGrainMs = voiceA_[ch].grainLenSamples * 1000.0f / juce::jmax (1.0f, (float) currentSampleRate);
+				const float shortRelaunchBlend = smoothStep01 ((95.0f - voiceGrainMs) / 70.0f);
+				const float autoLead = voiceA_[ch].grainLenSamples * (0.30f + 0.20f * shortRelaunchBlend);
+				const float reverseLead = voiceA_[ch].grainLenSamples * (0.36f + 0.18f * shortRelaunchBlend);
+				const float baseRelaunchLead = juce::jmax (2.0f, voiceA_[ch].grainLenSamples * voiceA_[ch].smoothFraction * 0.5f);
+				const float desiredLead = midiExactPeriodRelaunch ? 0.0f
+				                        : autoRetuneRelaunch ? juce::jmax (baseRelaunchLead, autoLead)
+				                        : reverseAutoRelaunch ? juce::jmax (baseRelaunchLead, reverseLead)
+				                                             : baseRelaunchLead;
+				const float leadCap = voiceA_[ch].grainLenSamples * (autoRetuneRelaunch ? 0.55f : reverseAutoRelaunch ? 0.58f : 0.45f);
+				const float relaunchLead = canRelaunchVoice ? juce::jmin (leadCap, desiredLead) : 0.0f;
+				const bool voiceReachedEnd = voiceA_[ch].playPos >= voiceA_[ch].grainLenSamples || voiceA_[ch].playPos < 0.0f;
+				const bool voiceReachedFadeOut = canRelaunchVoice
+					&& voiceA_[ch].playPos >= (voiceA_[ch].grainLenSamples - relaunchLead);
+				if (voiceReachedEnd || voiceReachedFadeOut)
 				{
-					if (autoEnabled || runtimeTriggerEnabled)
+					if (canRelaunchVoice)
 					{
 						// Immediate relaunch: prevents silence gaps when pitch > 1
 						// or SCAN > 0 causes the grain to end before the auto
@@ -2176,11 +2448,12 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 #endif
 						const auto jit = makeJitterLaunchValues (ch, mode, relaunchSourceLen);
 						const float relaunchPitchScale = (mode == 3 && ch == 1) ? 0.5f : 1.0f;
+						const bool phaseAlign = autoEnabled && ! runtimeTriggerEnabled && ! launchReverse && ! backNForthEnabled;
 						launchNewGrain (ch, launchGrainLen, jit.sourceLenSamples,
 						                launchReverse, backNForthEnabled,
 						                relaunchAnchorOffsetSamples + jit.anchorOffsetSamples,
 						                launchBackNForthLegLen, relaunchPitchScale * jit.pitchScale,
-						                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep);
+						                jit.readBendDepthSamples, jit.readBendPhase, jit.readBendPhaseStep, phaseAlign);
 						autoPhaseCounter_ = 0.0f;
 #if GRA_TR_BNF_DETERMINISM_DUMP
 						bnfDumpCurrentLaunchReason_ = kBnfDumpReasonNone;
@@ -2201,7 +2474,8 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				const float sample = readGrainInterpolated (voiceB_[ch], (mode == 0) ? 0 : ch);
 
 				// Crossfade: fade-out (use voice's own stored grain length for consistency)
-				voiceB_[ch].fadeGain -= (1.0f / juce::jmax (1.0f, voiceB_[ch].grainLenSamples * voiceB_[ch].smoothFraction * 0.5f));
+				const float fadeOutSamples = juce::jmax (1.0f, voiceB_[ch].grainLenSamples * voiceB_[ch].smoothFraction * 0.5f);
+				voiceB_[ch].fadeGain -= (1.0f / fadeOutSamples);
 				if (voiceB_[ch].fadeGain <= 0.0f)
 				{
 					voiceB_[ch].active = false;
@@ -2209,11 +2483,28 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 				}
 				else
 				{
-					wet += sample * env * voiceB_[ch].fadeGain;
+					const float fadeB = std::sin (juce::jlimit (0.0f, 1.0f, voiceB_[ch].fadeGain) * juce::MathConstants<float>::halfPi);
+					const float weightB = env * fadeB;
+					wet += sample * weightB;
+					wetWeight += weightB;
 					advanceVoiceRead (voiceB_[ch], voiceB_[ch].backNForth ? 1.0f : voiceB_[ch].pitchRatio);
-					if (voiceB_[ch].readPos >= voiceB_[ch].grainLenSamples || voiceB_[ch].readPos < 0.0f)
+					if (voiceB_[ch].playPos >= voiceB_[ch].grainLenSamples || voiceB_[ch].playPos < 0.0f)
 						voiceB_[ch].active = false;
 				}
+			}
+
+			// Keep overlapping fades level-stable. Only attenuate excess overlap;
+			// never boost sparse sections, so TRIGGER tails stay natural.
+			if (wetWeight > 1.0f)
+			{
+				const float inv = 1.0f / wetWeight;
+				wet *= std::sqrt (inv);
+			}
+			else if (autoEnabled && wetWeight > 0.15f)
+			{
+				// AUTO is expected to be continuous; mild make-up avoids short-grain
+				// tremolo without boosting sparse trigger tails or silence.
+				wet *= 1.0f + (1.0f - wetWeight) * 0.35f;
 			}
 
 			if (ch == 0) wetL = wet;
@@ -2238,20 +2529,13 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (!filterPre_) filterWetSample (wetL, wetR);
 		if (chaosDelayEnabled_) applyChaosDelay (wetL, wetR);
 
-		// Mode Out: MID stays dual-mono, SIDE becomes true stereo (+S / -S)
-		if (numChannels >= 2 && modeOutVal != 0)
+		// Mode Out: 0=L+R, 1=M/S decode, 2=MID, 3=SIDE
+		if (numChannels >= 2)
 		{
-			const float mono = (wetL + wetR) * 0.5f;
-			if (modeOutVal == 1)
-			{
-				wetL = mono;
-				wetR = mono;
-			}
-			else /* modeOutVal == 2 */
-			{
-				wetL = mono;
-				wetR = -mono;
-			}
+			const auto routedWet = TR::DSP::applyModeOut ({ wetL, wetR },
+			                                               TR::DSP::channelModeFromInt (modeOutVal));
+			wetL = routedWet.l;
+			wetR = routedWet.r;
 		}
 
 		// Mix dry/wet with Sum Bus routing
@@ -2338,14 +2622,19 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 
 	// Safety hard-limiter
+	float outputMeterPeak = 0.0f;
 	{
 		constexpr float kSafetyLimit = 251.19f;
 		for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
 		{
 			auto* data = buffer.getWritePointer (ch);
 			juce::FloatVectorOperations::clip (data, data, -kSafetyLimit, kSafetyLimit, numSamples);
+			for (int i = 0; i < numSamples; ++i)
+				TR::DSP::observePeak (outputMeterPeak, data[i]);
 		}
 	}
+	TR::DSP::publishPeak (inputMeterPeak_, inputMeterPeak);
+	TR::DSP::publishPeak (outputMeterPeak_, outputMeterPeak);
 
 	if (pendingMidiEventCount_ > 0)
 	{
@@ -2464,6 +2753,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 		kParamMod, "Mod",
 		juce::NormalisableRange<float> (kModMin, kModMax, 0.0f, 1.0f), kModDefault));
 
+	params.push_back (std::make_unique<juce::AudioParameterBool> (
+		 kParamModHarm, "Mod Harm", false));
+
 	params.push_back (std::make_unique<juce::AudioParameterFloat> (
 		kParamPitch, "Pitch",
 		juce::NormalisableRange<float> (kPitchMin, kPitchMax, 0.01f, 1.0f), kPitchDefault));
@@ -2497,9 +2789,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 		juce::NormalisableRange<float> (kMixMin, kMixMax, 0.0f, 1.0f), kMixDefault));
 
 	params.push_back (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeIn, "Mode In", juce::StringArray { "L+R", "MID", "SIDE" }, kModeInOutDefault));
+		kParamModeIn, "Mode In", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeInOutDefault));
 	params.push_back (std::make_unique<juce::AudioParameterChoice> (
-		kParamModeOut, "Mode Out", juce::StringArray { "L+R", "MID", "SIDE" }, kModeInOutDefault));
+		kParamModeOut, "Mode Out", juce::StringArray { "L+R", "M/S", "MID", "SIDE" }, kModeInOutDefault));
 	params.push_back (std::make_unique<juce::AudioParameterChoice> (
 		kParamSumBus, "Sum Bus", juce::StringArray { "ST", u8"\u2192M", u8"\u2192S" }, kSumBusDefault));
 
@@ -2590,8 +2882,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiHeight, "UI Height", 240, 1200, 752));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamUiPalette, "UI Palette", false));
 	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamUiCrt, "UI CRT", false));
+	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamUiIoFx, "UI I/O FX", true));
 	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor0, "UI Color 0", 0, 0xFFFFFF, 0x00FF00));
 	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor1, "UI Color 1", 0, 0xFFFFFF, 0x000000));
+	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor2, "UI Color 2", 0, 0xFFFFFF, 0x0000FF));
+	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor3, "UI Color 3", 0, 0xFFFFFF, 0xFF0000));
 
 	return { params.begin(), params.end() };
 }
@@ -2655,6 +2950,22 @@ bool GRATRAudioProcessor::getUiCrtEnabled() const noexcept
 	if (! fromState.isVoid()) return (bool) fromState;
 	if (uiCrtParam != nullptr) return uiCrtParam->load (std::memory_order_relaxed) > 0.5f;
 	return uiCrtEnabled.load (std::memory_order_relaxed) != 0;
+}
+
+void GRATRAudioProcessor::setUiIoFxEnabled (bool enabled)
+{
+	uiIoFxEnabled.store (enabled ? 1 : 0, std::memory_order_relaxed);
+	apvts.state.setProperty (UiStateKeys::ioFxEnabled, enabled, nullptr);
+	setParameterPlainValue (apvts, kParamUiIoFx, enabled ? 1.0f : 0.0f);
+	updateHostDisplay();
+}
+
+bool GRATRAudioProcessor::getUiIoFxEnabled() const noexcept
+{
+	const auto fromState = apvts.state.getProperty (UiStateKeys::ioFxEnabled);
+	if (! fromState.isVoid()) return (bool) fromState;
+	if (uiIoFxParam != nullptr) return uiIoFxParam->load (std::memory_order_relaxed) > 0.5f;
+	return uiIoFxEnabled.load (std::memory_order_relaxed) != 0;
 }
 
 void GRATRAudioProcessor::setUiIoExpanded (bool expanded)
@@ -2771,21 +3082,23 @@ int GRATRAudioProcessor::getTriggerDelayMs() const noexcept
 
 void GRATRAudioProcessor::setUiCustomPaletteColour (int index, juce::Colour colour)
 {
-	if (index >= 0 && index < 2)
+	if (index >= 0 && index < 4)
 	{
 		uiCustomPalette[(size_t) index].store (colour.getARGB(), std::memory_order_relaxed);
 		const juce::String key = UiStateKeys::customPalette[(size_t) index];
 		apvts.state.setProperty (key, (int) colour.getARGB(), nullptr);
 		if (uiColorParams[(size_t) index] != nullptr)
-			setParameterPlainValue (apvts, (index == 0 ? kParamUiColor0 : kParamUiColor1),
-			                        (float) (int) colour.getARGB());
+		{
+			const char* colorParamIds[4] { kParamUiColor0, kParamUiColor1, kParamUiColor2, kParamUiColor3 };
+			setParameterPlainValue (apvts, colorParamIds[index], (float) (int) colour.getARGB());
+		}
 		updateHostDisplay();
 	}
 }
 
 juce::Colour GRATRAudioProcessor::getUiCustomPaletteColour (int index) const noexcept
 {
-	if (index < 0 || index >= 2)
+	if (index < 0 || index >= 4)
 		return juce::Colours::white;
 
 	const juce::String key = UiStateKeys::customPalette[(size_t) index];
