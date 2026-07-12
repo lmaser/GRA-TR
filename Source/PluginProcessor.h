@@ -5,6 +5,7 @@
 #include <atomic>
 #include <cstdint>
 #include <vector>
+#include "../../TR-Shared/SimpleUI/SimpleUIStateKeys.h"
 
 #ifndef GRA_TR_BNF_DETERMINISM_DUMP
 #define GRA_TR_BNF_DETERMINISM_DUMP 0
@@ -256,19 +257,17 @@ public:
 private:
 	struct UiStateKeys
 	{
-		static constexpr const char* editorWidth      = "uiEditorWidth";
-		static constexpr const char* editorHeight     = "uiEditorHeight";
-		static constexpr const char* useCustomPalette = "uiUseCustomPalette";
-		static constexpr const char* crtEnabled       = "uiFxTailEnabled";
-		static constexpr const char* ioFxEnabled      = "uiIoFxEnabled";
+		static constexpr const char* editorWidth      = TR::SimpleUiStateKeys::editorWidth;
+		static constexpr const char* editorHeight     = TR::SimpleUiStateKeys::editorHeight;
+		static constexpr const char* useCustomPalette = TR::SimpleUiStateKeys::useCustomPalette;
+		static constexpr const char* crtEnabled       = TR::SimpleUiStateKeys::crtEnabled;
+		static constexpr const char* ioFxEnabled      = TR::SimpleUiStateKeys::ioFxEnabled;
 		static constexpr const char* midiPort         = "midiPort";
 		static constexpr const char* midiDelayMs      = "midiDelayMs";
 		static constexpr const char* autoDelayMs      = "autoDelayMs";
 		static constexpr const char* triggerDelayMs   = "triggerDelayMs";
 		static constexpr const char* ioExpanded       = "uiIoExpanded";
-		static constexpr std::array<const char*, 4> customPalette {
-			"uiCustomPalette0", "uiCustomPalette1", "uiCustomPalette2", "uiCustomPalette3"
-		};
+		static constexpr auto customPalette = TR::SimpleUiStateKeys::customPalette;
 	};
 
 	double currentSampleRate = 44100.0;

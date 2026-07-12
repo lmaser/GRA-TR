@@ -17,31 +17,7 @@ using namespace TR;
 #endif
 
 
-namespace UiStateKeys
-
-{
-
-    constexpr const char* editorWidth = "uiEditorWidth";
-
-    constexpr const char* editorHeight = "uiEditorHeight";
-
-    constexpr const char* useCustomPalette = "uiUseCustomPalette";
-
-    constexpr const char* crtEnabled = "uiFxTailEnabled";
-
-    constexpr std::array<const char*, 4> customPalette {
-
-        "uiCustomPalette0",
-
-        "uiCustomPalette1",
-
-        "uiCustomPalette2",
-
-        "uiCustomPalette3"
-
-    };
-
-}
+namespace UiStateKeys = TR::SimpleUiStateKeys;
 
 
 // -- Timer & display constants --
@@ -2581,9 +2557,9 @@ void GRATRAudioProcessorEditor::openGraphicsPopup()
 {
     lnf.setScheme (activeScheme);
     useCustomPalette = audioProcessor.getUiUseCustomPalette();
-    crtEnabled = audioProcessor.getUiCrtEnabled();
+    crtEnabled = false;
     ioFxEnabled = audioProcessor.getUiIoFxEnabled();
-    crtEffect.setEnabled (crtEnabled);
+    crtEffect.setEnabled (false);
     applyActivePalette();
 
     TR::openGraphicsPopupShared<GRATRAudioProcessorEditor> (this,
@@ -3198,19 +3174,19 @@ TR::SimpleMainPanelSpec GRATRAudioProcessorEditor::buildMainPanelSpec()
                                              &cachedModIntOnly, &cachedInputIntOnly, &cachedOutputIntOnly,
                                              &cachedMixIntOnly, &cachedTiltIntOnly, &cachedLimThresholdIntOnly };
         for (int i = 0; i < 12; ++i)
-            spec.rows.push_back ({ {}, full[i], shrt[i], intOnly[i], cachedValueAreas_[(size_t)i], true });
+            TR::addSimpleMainPanelRow (spec, false, full[i], shrt[i], intOnly[i],
+                                       cachedValueAreas_[(size_t) i]);
     }
 
     // Expanded-only rows
     auto addExp = [&](const juce::Slider& s, const juce::Rectangle<int>& area,
                        const juce::String* full, const juce::String* shrt, const juce::String* intOnly = nullptr)
     {
-        if (s.isVisible() && area.getWidth() > 0)
-            spec.expandedRows.push_back ({ {}, full, shrt, intOnly, area, true });
+        TR::addSimpleMainPanelRow (spec, true, full, shrt, intOnly, area, s.isVisible());
     };
     addExp (tiltSlider, cachedTiltValueArea_, &cachedTiltTextFull, &cachedTiltTextShort, &cachedTiltIntOnly);
-    if (filterBar_.isVisible() && cachedFilterValueArea_.getWidth() > 0)
-        spec.expandedRows.push_back ({ {}, &cachedFilterTextFull, &cachedFilterTextShort, nullptr, cachedFilterValueArea_, true });
+    TR::addSimpleMainPanelRow (spec, true, &cachedFilterTextFull, &cachedFilterTextShort, nullptr,
+                               cachedFilterValueArea_, filterBar_.isVisible());
     addExp (panSlider, cachedPanValueArea_, &cachedPanTextFull, &cachedPanTextShort);
     addExp (limThresholdSlider, cachedLimThresholdValueArea_, &cachedLimThresholdTextFull, &cachedLimThresholdTextShort, &cachedLimThresholdIntOnly);
 
@@ -3223,38 +3199,33 @@ TR::SimpleMainPanelSpec GRATRAudioProcessorEditor::buildMainPanelSpec()
     };
 
     // Chaos toggles (always when expanded)
-    int W = getWidth();
-    auto addTog = [&](juce::Button& btn, juce::Rectangle<int> area, juce::String full, juce::String shrt, int cr)
-    {
-        if (btn.isVisible())
-            spec.toggles.push_back ({ full, shrt, &btn, area, cr, true, btn.isEnabled() });
-    };
-    addTog (chaosFilterButton, getChaosLabelArea(), "CHSF", "CHSF",
-            chaosDelayButton.isVisible() ? chaosDelayButton.getX()-TR::kSimpleToggleLegendCollisionPadPx : W-TR::kSimpleToggleLegendCollisionPadPx);
-    addTog (chaosDelayButton,
-            TR::makeSimpleToggleLabelArea(chaosDelayButton, W-TR::kSimpleToggleLegendCollisionPadPx, "CHSD", "CHSD"),
-            "CHSD", "CHSD", W-TR::kSimpleToggleLegendCollisionPadPx);
+    const int W = getWidth();
+    TR::addSimpleMainPanelToggle (spec, false, chaosFilterButton, getChaosLabelArea(), "CHSF", "CHSF",
+                                  TR::makeSimpleMainPanelRightBoundBefore (chaosDelayButton, W));
+    TR::addSimpleMainPanelToggle (spec, false, chaosDelayButton,
+                                  TR::makeSimpleToggleLabelArea (chaosDelayButton, TR::makeSimpleMainPanelRightBound (W), "CHSD", "CHSD"),
+                                  "CHSD", "CHSD", TR::makeSimpleMainPanelRightBound (W));
 
     // Collapsed toggles
     if (! ioSectionExpanded_)
     {
-        spec.collapsedToggles = {
-            { "GRN", "GRN", &reverseButton, getReverseLabelArea(), backNForthButton.getX()-TR::kSimpleToggleLegendCollisionPadPx, true, true },
-            { "B/F", "B/F", &backNForthButton, getBackNForthLabelArea(), W-TR::kSimpleToggleLegendCollisionPadPx, true, true },
-            { "SYNC", "SYN", &syncButton, getSyncLabelArea(), autoButton.getX()-TR::kSimpleToggleLegendCollisionPadPx, true, true },
-            { "AUTO", "AUTO", &autoButton, getAutoLabelArea(), triggerButton.getX()-TR::kSimpleToggleLegendCollisionPadPx, true, true },
-            { "TRIG", "TRIG", &triggerButton, getTriggerLabelArea(), midiButton.getX()-TR::kSimpleToggleLegendCollisionPadPx, true, true },
-            { "MIDI", "MIDI", &midiButton, getMidiLabelArea(), W-TR::kSimpleToggleLegendCollisionPadPx, true, true },
-        };
+        TR::addSimpleMainPanelToggle (spec, true, reverseButton, getReverseLabelArea(), "GRN", "GRN",
+                                      TR::makeSimpleMainPanelRightBoundBefore (backNForthButton, W));
+        TR::addSimpleMainPanelToggle (spec, true, backNForthButton, getBackNForthLabelArea(), "B/F", "B/F",
+                                      TR::makeSimpleMainPanelRightBound (W));
+        TR::addSimpleMainPanelToggle (spec, true, syncButton, getSyncLabelArea(), "SYNC", "SYN",
+                                      TR::makeSimpleMainPanelRightBoundBefore (autoButton, W));
+        TR::addSimpleMainPanelToggle (spec, true, autoButton, getAutoLabelArea(), "AUTO", "AUTO",
+                                      TR::makeSimpleMainPanelRightBoundBefore (triggerButton, W));
+        TR::addSimpleMainPanelToggle (spec, true, triggerButton, getTriggerLabelArea(), "TRIG", "TRIG",
+                                      TR::makeSimpleMainPanelRightBoundBefore (midiButton, W));
+        TR::addSimpleMainPanelToggle (spec, true, midiButton, getMidiLabelArea(), "MIDI", "MIDI",
+                                      TR::makeSimpleMainPanelRightBound (W));
     }
 
     if (cachedInfoGearPath.isEmpty())
         updateInfoIconCache();
-    if (! cachedInfoGearPath.isEmpty())
-    {
-        spec.infoGearPath = &cachedInfoGearPath;
-        spec.infoGearHole = &cachedInfoGearHole;
-    }
+    TR::setSimpleMainPanelInfoGear (spec, cachedInfoGearPath, cachedInfoGearHole);
 
     return spec;
 }
