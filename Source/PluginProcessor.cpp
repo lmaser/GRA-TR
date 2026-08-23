@@ -1,23 +1,10 @@
 #include "PluginProcessor.h"
-#include "PluginEditor.h"
+#include "UIV2/GraV2EditorFactory.h"
 #include "../../TR-Shared/SimpleDSP/TRSimpleDSP.h"
+#include "../../TR-Shared/SimpleDSP/TRStateCanonicalization.h"
 
 namespace
 {
-	// Hermite 4-point cubic interpolation --------------------------
-	inline float hermite4pt (float ym1, float y0, float y1, float y2, float frac) noexcept
-	{
-		const float c0 = y0;
-		const float c1 = 0.5f * (y1 - ym1);
-		const float c2 = ym1 - 2.5f * y0 + 2.0f * y1 - 0.5f * y2;
-		const float c3 = 0.5f * (y2 - ym1) + 1.5f * (y0 - y1);
-		return ((c3 * frac + c2) * frac + c1) * frac + c0;
-	}
-
-	// Gain / mix EMA coefficient: one-pole ~5 ms time constant at 44.1 kHz
-	constexpr float kGainSmoothCoeff = 0.9955f;
-	constexpr float kGainSmoothStep  = 1.0f - kGainSmoothCoeff;
-
 	// Minimum grain length in samples to avoid ultra-short grains that produce clicks.
 	// The user can still reach very short times; this only prevents pathological
 	// read windows shorter than an interpolation kernel.
@@ -95,16 +82,6 @@ namespace
 		return harmonicMode ? modSliderToHarmonicMultiplier (v)
 		                    : modSliderToLinearMultiplier (v);
 	}
-	inline void setParameterPlainValue (juce::AudioProcessorValueTreeState& apvts,
-	                                    const char* paramId, float plainValue)
-	{
-		if (auto* param = apvts.getParameter (paramId))
-		{
-			const float norm = param->convertTo0to1 (plainValue);
-			param->setValueNotifyingHost (norm);
-		}
-	}
-
 	inline float fastDecibelsToGain (float dB) noexcept
 	{
 		return (dB <= -100.0f) ? 0.0f : std::exp2 (dB * 0.16609640474f);
@@ -251,12 +228,14 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	                 #if ! JucePlugin_IsMidiEffect
 	                  #if ! JucePlugin_IsSynth
 	                   .withInput  ("Input", juce::AudioChannelSet::stereo(), true)
+	                   .withInput  ("Sidechain", juce::AudioChannelSet::stereo(), false)
 	                  #endif
 	                   .withOutput ("Output", juce::AudioChannelSet::stereo(), true)
 	                 #endif
 	                   )
 #endif
 	, apvts (*this, nullptr, "Parameters", createParameterLayout())
+	, modulation (apvts, TR::GraModulation::destinations())
 {
 	timeMsParam   = apvts.getRawParameterValue (kParamTimeMs);
 	timeSyncParam = apvts.getRawParameterValue (kParamTimeSync);
@@ -275,6 +254,7 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	sumBusParam   = apvts.getRawParameterValue (kParamSumBus);
 	limThresholdParam = apvts.getRawParameterValue (kParamLimThreshold);
 	limModeParam      = apvts.getRawParameterValue (kParamLimMode);
+	limQualityParam   = apvts.getRawParameterValue (kParamLimQuality);
 	invPolParam       = apvts.getRawParameterValue (kParamInvPol);
 	invStrParam       = apvts.getRawParameterValue (kParamInvStr);
 	mixModeParam   = apvts.getRawParameterValue (kParamMixMode);
@@ -303,20 +283,6 @@ GRATRAudioProcessor::GRATRAudioProcessor()
 	chaosAmtFilterParam = apvts.getRawParameterValue (kParamChaosAmtFilter);
 	chaosSpdFilterParam = apvts.getRawParameterValue (kParamChaosSpdFilter);
 
-	uiWidthParam   = apvts.getRawParameterValue (kParamUiWidth);
-	uiHeightParam  = apvts.getRawParameterValue (kParamUiHeight);
-	uiPaletteParam = apvts.getRawParameterValue (kParamUiPalette);
-	uiCrtParam     = apvts.getRawParameterValue (kParamUiCrt);
-	uiIoFxParam    = apvts.getRawParameterValue (kParamUiIoFx);
-	uiColorParams[0] = apvts.getRawParameterValue (kParamUiColor0);
-	uiColorParams[1] = apvts.getRawParameterValue (kParamUiColor1);
-	uiColorParams[2] = apvts.getRawParameterValue (kParamUiColor2);
-	uiColorParams[3] = apvts.getRawParameterValue (kParamUiColor3);
-
-	const int w = loadIntParamOrDefault (uiWidthParam, 360);
-	const int h = loadIntParamOrDefault (uiHeightParam, 752);
-	uiEditorWidth.store (w, std::memory_order_relaxed);
-	uiEditorHeight.store (h, std::memory_order_relaxed);
 }
 
 GRATRAudioProcessor::~GRATRAudioProcessor()
@@ -549,8 +515,9 @@ void GRATRAudioProcessor::changeProgramName (int index, const juce::String& newN
 //==============================================================================
 void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
-	juce::ignoreUnused (samplesPerBlock);
 	currentSampleRate = sampleRate;
+	modulation.prepare (currentSampleRate, juce::jmax (1, samplesPerBlock));
+	gainSmoothStep_ = TR::DSP::onePoleStepFromTau (sampleRate, 0.005f);
 
 	// Allocate grain buffer (power of 2, enough for max grain time)
 	const int requestedSamples = (int) std::ceil (sampleRate * (kTimeMsMaxSync / 1000.0)) + 1024;
@@ -588,6 +555,7 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	syncedAutoDryFillGain_ = 0.0f;
 	triggerDelayElapsedSamples_ = 0;
 	hostTransport_.reset();
+	resetGrainTelemetry();
 	clearPendingMidiEvents();
 	clearMidiTrackingState();
 
@@ -645,8 +613,9 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	chaosDelayEnabled_  = false;
 	chaosStereo_ = false;
 	chaosAmtD_ = 0.0f; chaosAmtNormD_ = 0.0f; chaosAmtF_ = 0.0f;
-	chaosShPeriodD_ = 8820.0f; smoothedChaosShPeriodD_ = 8820.0f;
-	chaosShPeriodF_ = 8820.0f; smoothedChaosShPeriodF_ = 8820.0f;
+	const float initialChaosPeriod = (float) currentSampleRate / juce::jmax (kChaosSpdMin, kChaosSpdDefault);
+	chaosShPeriodD_ = initialChaosPeriod; smoothedChaosShPeriodD_ = initialChaosPeriod;
+	chaosShPeriodF_ = initialChaosPeriod; smoothedChaosShPeriodF_ = initialChaosPeriod;
 	chaosDelayMaxSamples_ = 0.0f; smoothedChaosDelayMaxSamples_ = 0.0f;
 	chaosGainMaxDb_ = 0.0f; smoothedChaosGainMaxDb_ = 0.0f;
 	chaosFilterMaxOct_ = 0.0f; smoothedChaosFilterMaxOct_ = 0.0f;
@@ -676,19 +645,15 @@ void GRATRAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 	chaosDelaySmoothStep_ = 1.0f - std::exp (-1.0f / ((float) currentSampleRate * 0.002f));
 	jitterSmoothStep_ = 1.0f - std::exp (-1.0f / ((float) currentSampleRate * 0.050f));
 
-	// Limiter state reset
-	limEnv1_[0] = limEnv1_[1] = kLimFloor;
-	limEnv2_[0] = limEnv2_[1] = kLimFloor;
-	{
-		const float sr = static_cast<float> (currentSampleRate);
-		limAtt1_ = std::exp (-1.0f / (sr * 0.002f));   // 2 ms attack
-		limRel1_ = std::exp (-1.0f / (sr * 0.010f));   // 10 ms release
-		limRel2_ = std::exp (-1.0f / (sr * 0.100f));   // 100 ms release
-	}
+	limiterBank_.prepare (currentSampleRate);
+	limiterBank_.setGlobalQuality (loadIntParamOrDefault (limModeParam, kLimModeDefault),
+	                               loadIntParamOrDefault (limQualityParam, kLimQualityDefault));
+	setLatencySamples (limiterBank_.getAdditionalLatencySamples());
 }
 
 void GRATRAudioProcessor::releaseResources()
 {
+	modulation.reset();
 #if GRA_TR_BNF_DETERMINISM_DUMP
 	logBnfDeterminismEvent (BnfDumpEvent::release);
 	flushBnfDeterminismDump();
@@ -698,6 +663,7 @@ void GRATRAudioProcessor::releaseResources()
 	grainBufferLength   = 0;
 	grainBufferWritePos = 0;
 	hostTransport_.reset();
+	resetGrainTelemetry();
 	clearPendingMidiEvents();
 	clearMidiTrackingState();
 	prevTriggerState_ = false;
@@ -801,21 +767,9 @@ void GRATRAudioProcessor::resetGranularSchedulersForDeterministicStart (bool rev
 
 void GRATRAudioProcessor::resetJitterEngines() noexcept
 {
-	auto randomBipolar = [] (juce::Random& rng) noexcept
-	{
-		return rng.nextFloat() * 2.0f - 1.0f;
-	};
-
 	auto initEngine = [&] (JitterEngine& engine, juce::int64 seed, float rateA, float rateB) noexcept
 	{
-		engine.rng = juce::Random (seed);
-		engine.driftPhaseA = engine.rng.nextFloat();
-		engine.driftPhaseB = engine.rng.nextFloat();
-		engine.driftRateHzA = rateA * (0.85f + engine.rng.nextFloat() * 0.30f);
-		engine.driftRateHzB = rateB * (0.85f + engine.rng.nextFloat() * 0.30f);
-		engine.shCurr = randomBipolar (engine.rng);
-		engine.shNext = randomBipolar (engine.rng);
-		engine.shPhase = engine.rng.nextFloat();
+		engine.reset (seed, rateA, rateB);
 	};
 
 	for (int ch = 0; ch < 2; ++ch)
@@ -872,17 +826,6 @@ float GRATRAudioProcessor::advanceJitterEngine (JitterEngine& engine, float slow
                                                 float maxSlowRateHz, float maxFastRateHz,
                                                 float maxBlend) noexcept
 {
-	const float sr = juce::jmax (1.0f, (float) currentSampleRate);
-	auto wrapPhase = [] (float phase) noexcept
-	{
-		return phase >= 1.0f ? phase - std::floor (phase) : phase;
-	};
-	auto smootherStep = [] (float t) noexcept
-	{
-		t = juce::jlimit (0.0f, 1.0f, t);
-		return t * t * t * (t * (t * 6.0f - 15.0f) + 10.0f);
-	};
-
 	const float safeSlowRateHz = juce::jlimit (kJitterSlowRateMinHz,
 		juce::jmax (kJitterSlowRateMinHz, maxSlowRateHz), slowRateHz);
 	const float slowRateA = juce::jlimit (kJitterSlowRateMinHz,
@@ -894,23 +837,8 @@ float GRATRAudioProcessor::advanceJitterEngine (JitterEngine& engine, float slow
 		safeSlowRateHz * juce::jmax (kJitterDriftReferenceHz,
 		                              engine.driftRateHzB / kJitterDriftReferenceHz));
 
-	engine.driftPhaseA = wrapPhase (engine.driftPhaseA + slowRateA / sr);
-	engine.driftPhaseB = wrapPhase (engine.driftPhaseB + slowRateB / sr);
-	const float slow = std::sin (engine.driftPhaseA * kTwoPi) * 0.68f
-	                 + std::sin (engine.driftPhaseB * kTwoPi) * 0.32f;
-
-	const float safeFastRateHz = juce::jlimit (0.1f, juce::jmax (0.1f, maxFastRateHz), fastRateHz);
-	engine.shPhase += safeFastRateHz / sr;
-	if (engine.shPhase >= 1.0f)
-	{
-		engine.shPhase -= std::floor (engine.shPhase);
-		engine.shCurr = engine.shNext;
-		engine.shNext = engine.rng.nextFloat() * 2.0f - 1.0f;
-	}
-
-	const float sh = engine.shCurr + (engine.shNext - engine.shCurr) * smootherStep (engine.shPhase);
-	const float blend = juce::jlimit (0.0f, juce::jmax (0.0f, maxBlend), fastBlend);
-	return juce::jlimit (-1.0f, 1.0f, slow * (1.0f - blend) + sh * blend);
+	return engine.advance ((float) currentSampleRate, slowRateA, slowRateB,
+	                       fastRateHz, fastBlend, maxFastRateHz, maxBlend);
 }
 
 void GRATRAudioProcessor::advanceJitterEngines (float amount, float referenceSamples) noexcept
@@ -1003,10 +931,17 @@ bool GRATRAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) co
 	if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::mono()
 	 && layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
 		return false;
-   #if ! JucePlugin_IsSynth
+	#if ! JucePlugin_IsSynth
 	if (layouts.getMainOutputChannelSet() != layouts.getMainInputChannelSet())
 		return false;
-   #endif
+	if (layouts.inputBuses.size() > 1)
+	{
+		const auto sidechain = layouts.getChannelSet (true, 1);
+		if (! sidechain.isDisabled() && sidechain != juce::AudioChannelSet::mono()
+		    && sidechain != juce::AudioChannelSet::stereo())
+			return false;
+	}
+	#endif
 	return true;
   #endif
 }
@@ -1046,8 +981,8 @@ void GRATRAudioProcessor::filterWetSample (float& wetL, float& wetR)
 	float lpTarget = wetFilterTargetLpFreq_;
 
 	// EMA frequency smoothing (base, no chaos)
-	smoothedFilterHpFreq_ += (hpTarget - smoothedFilterHpFreq_) * kGainSmoothStep;
-	smoothedFilterLpFreq_ += (lpTarget - smoothedFilterLpFreq_) * kGainSmoothStep;
+	smoothedFilterHpFreq_ += (hpTarget - smoothedFilterHpFreq_) * gainSmoothStep_;
+	smoothedFilterLpFreq_ += (lpTarget - smoothedFilterLpFreq_) * gainSmoothStep_;
 
 	// Batched coefficient update (with per-channel chaos overlay)
 	if (--filterCoeffCountdown_ <= 0)
@@ -1246,7 +1181,7 @@ void GRATRAudioProcessor::launchNewGrain (int ch, float grainLenSamples, float s
 			const int idx1  = (idx0 + 1) & wrapMask;
 			const int idx2  = (idx0 + 2) & wrapMask;
 			const float frac = pos - std::floor (pos);
-			return hermite4pt (buf[idxM1], buf[idx0], buf[idx1], buf[idx2], frac);
+			return TR::DSP::cubicHermite4Point (buf[idxM1], buf[idx0], buf[idx1], buf[idx2], frac);
 		};
 
 		const GrainVoice& outgoing = voiceB_[ch];
@@ -1420,7 +1355,7 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 		const int idx2  = (idx0 + 2) & wrapMask;
 		const float frac = bufPos - std::floor (bufPos);
 
-		return hermite4pt (buf[idxM1], buf[idx0], buf[idx1], buf[idx2], frac);
+		return TR::DSP::cubicHermite4Point (buf[idxM1], buf[idx0], buf[idx1], buf[idx2], frac);
 	};
 
 	if (bnfBoundaryBlend > 0.0f)
@@ -1428,6 +1363,25 @@ float GRATRAudioProcessor::readGrainInterpolated (const GrainVoice& v, int ch) c
 		     + readAtOffset (bnfBoundaryReadOffset) * bnfBoundaryBlend;
 
 	return readAtOffset (readOffset);
+}
+
+float GRATRAudioProcessor::effectiveGrainTaperSamples (const GrainVoice& v) const noexcept
+{
+	if (v.grainLenSamples < 2.0f)
+		return 0.0f;
+
+	const float grainMs = v.grainLenSamples * 1000.0f / juce::jmax (1.0f, (float) currentSampleRate);
+	const float shortBlend = smoothStep01 ((85.0f - grainMs) / 65.0f);
+	const float reverseBlend = (v.reverse && ! v.backNForth) ? smoothStep01 ((150.0f - grainMs) / 120.0f) : 0.0f;
+	const float windowBlend = v.fixedOlaWindow ? 1.0f : juce::jmax (shortBlend, reverseBlend * 0.95f);
+	const float minTaper = juce::jmax (3.0f, v.pitchRatio * 3.0f);
+	const float maxTaper = juce::jmax (minTaper, v.grainLenSamples * (0.40f + 0.10f * windowBlend));
+	const float reverseTaperFloor = (v.reverse && ! v.backNForth)
+		? v.grainLenSamples * (0.18f + 0.22f * reverseBlend)
+		: minTaper;
+	return juce::jmin (maxTaper,
+	                   juce::jmax (juce::jmax (minTaper, reverseTaperFloor),
+	                                v.smoothFraction * v.grainLenSamples * 0.5f));
 }
 
 float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
@@ -1450,14 +1404,7 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 
 	// Taper length: minimum covers read-step skips; short grains can safely use
 	// half-window tapers because the Hann blend preserves a smooth derivative.
-	const float minTaper = juce::jmax (3.0f, v.pitchRatio * 3.0f);
-	const float maxTaper = juce::jmax (minTaper, v.grainLenSamples * (0.40f + 0.10f * windowBlend));
-	const float reverseTaperFloor = (v.reverse && ! v.backNForth)
-		? v.grainLenSamples * (0.18f + 0.22f * reverseBlend)
-		: minTaper;
-	const float taperLen = juce::jmin (maxTaper,
-	                                   juce::jmax (juce::jmax (minTaper, reverseTaperFloor),
-	                                                v.smoothFraction * v.grainLenSamples * 0.5f));
+	const float taperLen = effectiveGrainTaperSamples (v);
 
 	float tukey = 1.0f;
 	if (pos < taperLen)
@@ -1470,6 +1417,131 @@ float GRATRAudioProcessor::grainEnvelope (const GrainVoice& v) const
 	return tukey + (hann - tukey) * windowBlend;
 }
 
+float GRATRAudioProcessor::normalizedGrainReadPhase (const GrainVoice& v) const noexcept
+{
+	if (! v.active || v.sourceLenSamples < 2.0f)
+		return 0.0f;
+
+	const float sourceMax = juce::jmax (1.0f, v.sourceLenSamples - 1.0f);
+	float readOffset = 0.0f;
+	if (v.backNForth)
+	{
+		const float legLen = juce::jlimit (1.0f, v.grainLenSamples, v.backNForthLegLenSamples);
+		const float cellLen = juce::jmax (1.0f, v.backNForthCellLenSamples);
+		const int cellCount = juce::jmax (1, v.backNForthCellCount);
+		const int cellIndex = juce::jlimit (0, cellCount - 1, (int) std::floor (v.readPos / cellLen));
+		const float cellPos = juce::jmax (0.0f, v.readPos - (float) cellIndex * cellLen);
+		const float sourceCellLen = v.backNForthSourceCellLenSamples;
+		const float sourceCellStart = juce::jmin (sourceMax, sourceCellLen * (float) cellIndex);
+		const float sourceCellSpan = juce::jmax (0.0f, juce::jmin (sourceMax - sourceCellStart,
+		                                                            sourceCellLen - 1.0f));
+		const bool secondLeg = cellPos >= legLen;
+		const bool reverseLeg = secondLeg ? ! v.reverse : v.reverse;
+		const float legPos = juce::jlimit (0.0f, juce::jmax (0.0f, legLen - 1.0f),
+		                                   secondLeg ? cellPos - legLen : cellPos);
+		const float readSpan = juce::jmin (sourceCellSpan,
+		                                       juce::jmax (1.0f, legLen - 1.0f) * v.pitchRatio);
+		const float travel = juce::jlimit (0.0f, readSpan, legPos * v.pitchRatio);
+		readOffset = sourceCellStart + (reverseLeg ? readSpan - travel : travel);
+	}
+	else
+	{
+		readOffset = v.reverse ? sourceMax - v.readPos : v.readPos;
+	}
+	return juce::jlimit (0.0f, 1.0f, readOffset / sourceMax);
+}
+
+void GRATRAudioProcessor::resetGrainTelemetry() noexcept
+{
+	telemetryLifetime_.store (0.0f, std::memory_order_relaxed);
+	telemetrySourceSpan_.store (0.0f, std::memory_order_relaxed);
+	for (auto& phase : telemetryPhases_)
+		phase.store (0.0f, std::memory_order_relaxed);
+	telemetryActiveVoiceCount_.store (0, std::memory_order_relaxed);
+	telemetryTaper_.store (0.0f, std::memory_order_relaxed);
+	telemetryDirection_.store (0.0f, std::memory_order_relaxed);
+	telemetryPitch_.store (0.5f, std::memory_order_relaxed);
+}
+
+void GRATRAudioProcessor::publishGrainTelemetry() noexcept
+{
+	std::array<const GrainVoice*, 3> voices {};
+	int voiceCount = 0;
+	const auto append = [&] (const GrainVoice& voice)
+	{
+		if (voice.active && voiceCount < (int) voices.size())
+			voices[(size_t) voiceCount++] = &voice;
+	};
+
+	if (autoOlaReady_)
+		for (const auto& voice : autoOla_[0]) append (voice);
+	else
+	{
+		append (voiceA_[0]);
+		append (voiceB_[0]);
+	}
+
+	telemetryActiveVoiceCount_.store (voiceCount, std::memory_order_relaxed);
+	for (int index = 0; index < (int) telemetryPhases_.size(); ++index)
+		telemetryPhases_[(size_t) index].store (
+			index < voiceCount ? normalizedGrainReadPhase (*voices[(size_t) index]) : 0.0f,
+			std::memory_order_relaxed);
+
+	const float grainLen = juce::jmax (kMinGrainSamples, smoothedGrainLen_);
+	const float grainMs = grainLen * 1000.0f
+	                    / juce::jmax (1.0f, (float) currentSampleRate);
+	const float lifetimeRange = std::log (kTimeMsMaxSync / kTimeMsMin);
+	const float lifetime = lifetimeRange > 0.0f
+		? std::log (juce::jmax (kTimeMsMin, grainMs) / kTimeMsMin) / lifetimeRange
+		: 0.0f;
+	const bool backNForth = loadBoolParamOrDefault (backNForthParam, false);
+	const bool reverse = loadBoolParamOrDefault (reverseParam, false) && ! backNForth;
+	const float captureLen = grainLen / juce::jmax (0.5f, smoothedScanRatio_);
+	const float pitchSpanScale = backNForth
+		? juce::jmax (1.0f, smoothedPitchRatio_ * 0.5f)
+		: juce::jmax (1.0f, smoothedPitchRatio_);
+	const float spanRatio = captureLen * pitchSpanScale / grainLen;
+	const float sourceSpan = (std::log2 (juce::jmax (0.5f, spanRatio)) + 1.0f) * 0.5f;
+
+	const float shortBlend = smoothStep01 ((85.0f - grainMs) / 65.0f);
+	const float reverseBlend = reverse ? smoothStep01 ((150.0f - grainMs) / 120.0f) : 0.0f;
+	const float windowBlend = autoOlaReady_ ? 1.0f : juce::jmax (shortBlend, reverseBlend * 0.95f);
+	const float minTaper = juce::jmax (3.0f, smoothedPitchRatio_ * 3.0f);
+	const float maxTaper = juce::jmax (minTaper, grainLen * (0.40f + 0.10f * windowBlend));
+	const float reverseTaperFloor = reverse
+		? grainLen * (0.18f + 0.22f * reverseBlend)
+		: minTaper;
+	const float taperSamples = juce::jmin (maxTaper,
+		juce::jmax (juce::jmax (minTaper, reverseTaperFloor),
+		              grainSmoothFraction_ * grainLen * 0.5f));
+	const float taper = taperSamples * 2.0f / grainLen;
+	const float pitchSemitones = std::log2 (juce::jmax (0.25f, smoothedPitchRatio_)) * 12.0f;
+	const float pitch = (pitchSemitones - kPitchMin) / (kPitchMax - kPitchMin);
+
+	telemetryLifetime_.store (juce::jlimit (0.0f, 1.0f, lifetime), std::memory_order_relaxed);
+	telemetrySourceSpan_.store (juce::jlimit (0.0f, 1.0f, sourceSpan), std::memory_order_relaxed);
+	telemetryTaper_.store (juce::jlimit (0.0f, 1.0f, taper), std::memory_order_relaxed);
+	telemetryPitch_.store (juce::jlimit (0.0f, 1.0f, pitch), std::memory_order_relaxed);
+	telemetryDirection_.store (voiceCount > 0
+		? (voices[0]->backNForth ? 1.0f : voices[0]->reverse ? 0.5f : 0.0f)
+		: (backNForth ? 1.0f : reverse ? 0.5f : 0.0f),
+		std::memory_order_relaxed);
+}
+
+GRATRAudioProcessor::GrainTelemetry GRATRAudioProcessor::getGrainTelemetry() const noexcept
+{
+	GrainTelemetry result;
+	result.lifetime = telemetryLifetime_.load (std::memory_order_relaxed);
+	result.sourceSpan = telemetrySourceSpan_.load (std::memory_order_relaxed);
+	for (int index = 0; index < (int) result.phases.size(); ++index)
+		result.phases[(size_t) index] = telemetryPhases_[(size_t) index].load (std::memory_order_relaxed);
+	result.activeVoiceCount = telemetryActiveVoiceCount_.load (std::memory_order_relaxed);
+	result.taper = telemetryTaper_.load (std::memory_order_relaxed);
+	result.direction = telemetryDirection_.load (std::memory_order_relaxed);
+	result.pitch = telemetryPitch_.load (std::memory_order_relaxed);
+	return result;
+}
+
 //==============================================================================
 void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
@@ -1478,6 +1550,79 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	const int numChannels = juce::jmin (buffer.getNumChannels(), 2);
 	const int numSamples  = buffer.getNumSamples();
 	float inputMeterPeak = 0.0f;
+
+	modulationMidiEvents.capture (midiMessages, numSamples);
+	const auto modulationTransport =
+		TR::Modulation::Integration::captureTransportContext (*this);
+	auto modulationMainInput = getBusBuffer (buffer, true, 0);
+	juce::AudioBuffer<float> modulationSidechain;
+	const juce::AudioBuffer<float>* modulationSidechainInput = nullptr;
+	if (getBusCount (true) > 1 && getChannelCountOfBus (true, 1) > 0)
+	{
+		modulationSidechain = getBusBuffer (buffer, true, 1);
+		modulationSidechainInput = &modulationSidechain;
+	}
+	const bool matrixJitterMotion = modulation.destinationHasActiveRoutes (
+		TR::GraModulation::jitterDepth);
+	TR::Modulation::Integration::MotionReferenceInput motionReferences;
+	if (matrixJitterMotion)
+	{
+		const auto previewTimeMs = modulation.previewBaseNativeFirstSample (
+			TR::GraModulation::time, loadAtomicOrDefault (timeMsParam, kTimeMsDefault),
+			kTimeMsDefault);
+		const auto previewMod = modulation.previewBaseNativeFirstSample (
+			TR::GraModulation::modulation, loadAtomicOrDefault (modParam, kModDefault),
+			kModDefault);
+		const auto previewPitch = modulation.previewBaseNativeFirstSample (
+			TR::GraModulation::pitch, loadAtomicOrDefault (pitchParam, kPitchDefault),
+			kPitchDefault);
+		const auto previewScan = modulation.previewBaseNativeFirstSample (
+			TR::GraModulation::scan, loadAtomicOrDefault (scanParam, kScanDefault),
+			kScanDefault);
+		const auto previewMultiplier = modSliderToEffectiveMultiplier (
+			previewMod, loadBoolParamOrDefault (modHarmParam, false));
+		const auto previewGrainSamples = juce::jmax (kMinGrainSamples,
+			(float) currentSampleRate * previewTimeMs * 0.001f
+			/ juce::jmax (0.001f, previewMultiplier));
+		const auto previewCaptureSamples = previewGrainSamples
+			/ std::exp2 (previewScan / 100.0f);
+		const auto previewSourceSamples = previewCaptureSamples
+			* juce::jmax (1.0f, std::exp2 (previewPitch / 12.0f));
+		const auto periodMs = previewSourceSamples * 1000.0f
+			/ juce::jmax (1.0f, (float) currentSampleRate);
+		motionReferences.values[2]
+			= TR::Modulation::Integration::normaliseMotionPeriodSeconds (
+				periodMs * 0.001f, 0.00005f, 4.0f);
+		motionReferences.periodMilliseconds[2] = periodMs;
+		motionReferences.periodAvailableMask = 0x04u;
+		motionReferences.availableMask = 0x04u;
+		for (int lane = 0; lane < 2; ++lane)
+		{
+			motionReferences.laneValues[2][lane] = motionReferences.values[2];
+			motionReferences.lanePeriodMilliseconds[2][lane] = periodMs;
+		}
+		motionReferences.laneAvailableMasks[2] = 0x03u;
+		motionReferences.lanePeriodAvailableMasks[2] = 0x03u;
+	}
+	modulation.process (modulationMainInput, modulationSidechainInput, &modulationTransport,
+	                    &modulationMidiEvents, true, nullptr, 0, 0,
+	                    matrixJitterMotion ? &motionReferences : nullptr);
+	const auto modulationTime = modulation.effectiveNativeAtSample (
+		TR::GraModulation::time, 0, loadAtomicOrDefault (timeMsParam, kTimeMsDefault));
+	const auto modulationMod = modulation.effectiveNativeAtSample (
+		TR::GraModulation::modulation, 0, loadAtomicOrDefault (modParam, kModDefault));
+	const auto modulationPitch = modulation.effectiveNativeAtSample (
+		TR::GraModulation::pitch, 0, loadAtomicOrDefault (pitchParam, kPitchDefault));
+	const auto modulationScan = modulation.effectiveNativeAtSample (
+		TR::GraModulation::scan, 0, loadAtomicOrDefault (scanParam, kScanDefault));
+	const auto modulationSmooth = modulation.effectiveNativeAtSample (
+		TR::GraModulation::smooth, 0, loadAtomicOrDefault (smoothParam, kSmoothDefault));
+	const auto modulationJitter = modulation.effectiveNativeAtSample (
+		TR::GraModulation::jitter, 0, loadAtomicOrDefault (jitterParam, kJitterDefault));
+	const auto modulationMix = modulation.effectiveNativeAtSample (
+		TR::GraModulation::mix, 0, loadAtomicOrDefault (mixParam, kMixDefault));
+	const auto modulationPan = modulation.effectiveNativeAtSample (
+		TR::GraModulation::pan, 0, loadAtomicOrDefault (panParam, kPanDefault));
 
 	// MIDI note tracking -------------------------------------------
 	const bool midiEnabled = loadBoolParamOrDefault (midiParam, false);
@@ -1529,6 +1674,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	if (grainBufferLength == 0 || currentSampleRate <= 0.0)
 	{
+		resetGrainTelemetry();
 #if GRA_TR_BNF_DETERMINISM_DUMP
 		bnfDumpProcessedSamples_ += (std::uint64_t) juce::jmax (0, numSamples);
 		++bnfDumpBlockIndex_;
@@ -1563,20 +1709,20 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		hostPosition = currentPlayHead->getPosition();
 	updateHostTransportMonitor (hostPosition, numSamples);
 
-	const float timeMsValue  = loadAtomicOrDefault (timeMsParam, kTimeMsDefault);
-	const float modValue     = loadAtomicOrDefault (modParam, kModDefault);
+	const float timeMsValue  = modulationTime;
+	const float modValue     = modulationMod;
 	const bool modHarm = loadBoolParamOrDefault (modHarmParam, false);
-	const float pitchSemi    = loadAtomicOrDefault (pitchParam, kPitchDefault);
-	const float scanPercent  = loadAtomicOrDefault (scanParam, kScanDefault);
+	const float pitchSemi    = modulationPitch;
+	const float scanPercent  = modulationScan;
 	const float jitterTarget = juce::jlimit (kJitterMin, kJitterMax,
-		loadAtomicOrDefault (jitterParam, kJitterDefault));
+		modulationJitter);
 	const float inputGainDb  = loadAtomicOrDefault (inputParam, kInputDefault);
 	const float outputGainDb = loadAtomicOrDefault (outputParam, kOutputDefault);
-	const float mixValue     = loadAtomicOrDefault (mixParam, kMixDefault);
+	const float mixValue     = modulationMix;
 	const int   mixMode  = loadIntParamOrDefault (mixModeParam, kMixModeDefault);
 	const float dryLevelTarget = (mixMode == 1) ? loadAtomicOrDefault (dryLevelParam, kDryLevelDefault) : kDryLevelDefault;
 	const float wetLevelTarget = (mixMode == 1) ? loadAtomicOrDefault (wetLevelParam, kWetLevelDefault) : kWetLevelDefault;
-	const float panTarget = juce::jlimit (kPanMin, kPanMax, loadAtomicOrDefault (panParam, kPanDefault));
+	const float panTarget = juce::jlimit (kPanMin, kPanMax, modulationPan);
 
 	// Filter / Tilt position
 	{
@@ -1597,6 +1743,9 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
 	// Limiter ------------------------------------------------------
 	const int limMode = loadIntParamOrDefault (limModeParam, kLimModeDefault);
+	const int limQuality = loadIntParamOrDefault (limQualityParam, kLimQualityDefault);
+	if (limiterBank_.setGlobalQuality (limMode, limQuality))
+		setLatencySamples (limiterBank_.getAdditionalLatencySamples());
 	const float limThreshLinTarget = (limMode != 0)
 		? fastDecibelsToGain (loadAtomicOrDefault (limThresholdParam, kLimThresholdDefault))
 		: 1.0f;
@@ -1676,7 +1825,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 	else
 	{
-		grainLenGlideStep_ = kGainSmoothStep;  // default ~5 ms smoothing
+		grainLenGlideStep_ = gainSmoothStep_;  // reference-compatible ~5 ms smoothing
 	}
 	if (! midiNoteActive && grainSizeTransitionActive_)
 	{
@@ -1694,7 +1843,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	// need a non-negotiable OLA floor; otherwise tonal material exposes the
 	// window boundaries as AM/decimating even when interpolation is clean.
 	const float smoothPct = juce::jlimit (0.0f, 1.0f,
-		loadAtomicOrDefault (smoothParam, kSmoothDefault) * 0.01f);
+		modulationSmooth * 0.01f);
 	const float baseGrainSmoothFraction = 0.02f + smoothPct * 0.98f;
 	const float effectiveGrainMs = effectiveGrainLen * 1000.0f / juce::jmax (1.0f, (float) currentSampleRate);
 	const float shortGrainBlend = smoothStep01 ((90.0f - effectiveGrainMs) / 70.0f);
@@ -2031,7 +2180,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		}
 		else
 		{
-			runtimeGrainLenGlideStep = kGainSmoothStep;
+			runtimeGrainLenGlideStep = gainSmoothStep_;
 		}
 
 		if (! runtimeMidiNoteActive && grainSizeTransitionActive_)
@@ -2100,22 +2249,26 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (chaosFilterEnabled_) advanceChaosF();
 
 		// Smooth gains
-		smoothedInputGain  += (inputGain  - smoothedInputGain)  * kGainSmoothStep;
-		smoothedOutputGain += (outputGain - smoothedOutputGain) * kGainSmoothStep;
-		smoothedMix        += (runtimeEffectiveMixTarget - smoothedMix) * kGainSmoothStep;
-		smoothedDryLevel   += (dryLevelTarget - smoothedDryLevel) * kGainSmoothStep;
-		smoothedWetLevel   += (wetLevelTarget - smoothedWetLevel) * kGainSmoothStep;
-		smoothedPan        += (panTarget - smoothedPan) * kGainSmoothStep;
-		smoothedLimThreshold += (limThreshLinTarget - smoothedLimThreshold) * kGainSmoothStep;
-		syncedAutoDryFillGain_ += ((syncedAutoDryFillActive_ ? 1.0f : 0.0f) - syncedAutoDryFillGain_) * kGainSmoothStep;
+		smoothedInputGain  += (inputGain  - smoothedInputGain)  * gainSmoothStep_;
+		smoothedOutputGain += (outputGain - smoothedOutputGain) * gainSmoothStep_;
+		smoothedMix        += (runtimeEffectiveMixTarget - smoothedMix) * gainSmoothStep_;
+		smoothedDryLevel   += (dryLevelTarget - smoothedDryLevel) * gainSmoothStep_;
+		smoothedWetLevel   += (wetLevelTarget - smoothedWetLevel) * gainSmoothStep_;
+		smoothedPan        += (panTarget - smoothedPan) * gainSmoothStep_;
+		smoothedLimThreshold += (limThreshLinTarget - smoothedLimThreshold) * gainSmoothStep_;
+		syncedAutoDryFillGain_ += ((syncedAutoDryFillActive_ ? 1.0f : 0.0f) - syncedAutoDryFillGain_) * gainSmoothStep_;
 		if (! syncedAutoDryFillActive_ && syncedAutoDryFillGain_ < kSnapEpsilon)
 			syncedAutoDryFillGain_ = 0.0f;
 
 		// Smooth pitch & scan ratios (same EMA as gain to avoid abrupt changes)
-		smoothedPitchRatio_   += (currentPitchRatio_   - smoothedPitchRatio_)   * kGainSmoothStep;
-		smoothedScanRatio_    += (currentScanRatio_    - smoothedScanRatio_)    * kGainSmoothStep;
-		jitterSmoothed_       += (jitterTarget         - jitterSmoothed_)       * jitterSmoothStep_;
-		if (jitterTarget <= 1.0e-5f && jitterSmoothed_ < 1.0e-5f)
+		smoothedPitchRatio_   += (currentPitchRatio_   - smoothedPitchRatio_)   * gainSmoothStep_;
+		smoothedScanRatio_    += (currentScanRatio_    - smoothedScanRatio_)    * gainSmoothStep_;
+		const auto currentJitterTarget = matrixJitterMotion
+			? juce::jlimit (0.0f, 1.0f, modulation.effectiveNativeAtSample (
+				TR::GraModulation::jitterDepth, i, 0.0f))
+			: jitterTarget;
+		jitterSmoothed_ += (currentJitterTarget - jitterSmoothed_) * jitterSmoothStep_;
+		if (currentJitterTarget <= 1.0e-5f && jitterSmoothed_ < 1.0e-5f)
 			jitterSmoothed_ = 0.0f;
 
 		// Smooth grain length (velocity-controlled glide when MIDI active)
@@ -2136,8 +2289,34 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 			: juce::jmax (1.0f, smoothedPitchRatio_);
 		const float launchSourceLen = juce::jlimit (kMinGrainSamples, (float) (grainBufferLength - 2),
 		                                            captureLen * sourcePitchSpanScale);
-		if (jitterTarget > 1.0e-5f || jitterSmoothed_ > 1.0e-5f)
-			advanceJitterEngines (jitterSmoothed_, launchSourceLen);
+		if (currentJitterTarget > 1.0e-5f || jitterSmoothed_ > 1.0e-5f)
+		{
+			if (matrixJitterMotion)
+			{
+				jitterSourceOut_[0] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterSourceL, i, 0.0f);
+				jitterSourceOut_[1] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterSourceR, i, 0.0f);
+				jitterAnchorOut_[0] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterAnchorL, i, 0.0f);
+				jitterAnchorOut_[1] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterAnchorR, i, 0.0f);
+				jitterPitchOut_[0] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterPitchL, i, 0.0f);
+				jitterPitchOut_[1] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterPitchR, i, 0.0f);
+				jitterReadBendOut_[0] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterReadBendL, i, 0.0f);
+				jitterReadBendOut_[1] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterReadBendR, i, 0.0f);
+				jitterRapidOut_[0] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterRapidL, i, 0.0f);
+				jitterRapidOut_[1] = modulation.effectiveNativeAtSample (
+					TR::GraModulation::jitterRapidR, i, 0.0f);
+			}
+			else
+				advanceJitterEngines (jitterSmoothed_, launchSourceLen);
+		}
 
 #if GRA_TR_BNF_DETERMINISM_DUMP
 		bnfDumpCaptureLen_ = captureLen;
@@ -2598,11 +2777,11 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 		if (limMode == 2)
 		{
 			if (numChannels >= 2)
-				applyLimiterSample (outL, outR, smoothedLimThreshold);
+				limiterBank_.processGlobalStereo (outL, outR, smoothedLimThreshold);
 			else
 			{
 				float dummy = 0.0f;
-				applyLimiterSample (outL, dummy, smoothedLimThreshold);
+				limiterBank_.processGlobalStereo (outL, dummy, smoothedLimThreshold);
 			}
 		}
 
@@ -2635,6 +2814,7 @@ void GRATRAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 	}
 	TR::DSP::publishPeak (inputMeterPeak_, inputMeterPeak);
 	TR::DSP::publishPeak (outputMeterPeak_, outputMeterPeak);
+	publishGrainTelemetry();
 
 	if (pendingMidiEventCount_ > 0)
 	{
@@ -2656,13 +2836,15 @@ bool GRATRAudioProcessor::hasEditor() const { return true; }
 
 juce::AudioProcessorEditor* GRATRAudioProcessor::createEditor()
 {
-	return new GRATRAudioProcessorEditor (*this);
+	return TR::GraUIV2::createEditor (*this);
 }
 
 //==============================================================================
 void GRATRAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
 	auto state = apvts.copyState();
+	TR::StateCanonicalization::removeRetiredVisualState (state);
+	TR::Modulation::replaceStateInParent (state, modulation.state());
 	std::unique_ptr<juce::XmlElement> xml (state.createXml());
 	copyXmlToBinary (*xml, destData);
 }
@@ -2674,7 +2856,13 @@ void GRATRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 	{
 		if (xmlState->hasTagName (apvts.state.getType()))
 		{
-			apvts.replaceState (juce::ValueTree::fromXml (*xmlState));
+			auto state = juce::ValueTree::fromXml (*xmlState);
+			TR::StateCanonicalization::removeRetiredVisualState (state);
+			const auto modulationResult = TR::Modulation::readStateFromParent (state);
+			if (! modulationResult.ok || ! modulation.setState (modulationResult.state))
+				return;
+			TR::Modulation::replaceStateInParent (state, modulationResult.state);
+			apvts.replaceState (state);
 			const auto restoredChannel = apvts.state.getProperty (UiStateKeys::midiPort);
 			if (! restoredChannel.isVoid())
 				midiChannel.store ((int) restoredChannel, std::memory_order_relaxed);
@@ -2698,6 +2886,56 @@ void GRATRAudioProcessor::setStateInformation (const void* data, int sizeInBytes
 			syncedAutoDryFillGain_ = 0.0f;
 		}
 	}
+}
+
+TR::Modulation::State GRATRAudioProcessor::modulationState() const
+{
+	return modulation.state();
+}
+
+bool GRATRAudioProcessor::setModulationState (const TR::Modulation::State& state)
+{
+	if (! modulation.setState (state)) return false;
+	if (! TR::Modulation::replaceStateInParent (apvts.state, state)) return false;
+	updateHostDisplay();
+	return true;
+}
+
+std::uint64_t GRATRAudioProcessor::modulationStateGeneration() const noexcept
+{
+	return modulation.stateGeneration();
+}
+
+std::array<float, TR::Modulation::macroCount>
+GRATRAudioProcessor::modulationMacroValues() const noexcept
+{
+	std::array<float, TR::Modulation::macroCount> result {};
+	for (int macro = 0; macro < TR::Modulation::macroCount; ++macro)
+		if (const auto* value = apvts.getRawParameterValue (
+			TR::Modulation::Integration::macroParameterId (macro)))
+			result[(size_t) macro] = value->load (std::memory_order_relaxed);
+	return result;
+}
+
+void GRATRAudioProcessor::setModulationMacroValue (int macro, float value)
+{
+	if (! juce::isPositiveAndBelow (macro, TR::Modulation::macroCount)) return;
+	if (auto* parameter = apvts.getParameter (
+		TR::Modulation::Integration::macroParameterId (macro)))
+		parameter->setValueNotifyingHost (
+			parameter->convertTo0to1 (juce::jlimit (0.0f, 1.0f, value)));
+}
+
+bool GRATRAudioProcessor::modulationDestinationValues (
+	juce::StringRef id, float& base, float& effective) const noexcept
+{
+	return modulation.destinationValues (id, base, effective);
+}
+
+TR::Modulation::Runtime::TelemetrySnapshot
+GRATRAudioProcessor::modulationTelemetry() const noexcept
+{
+	return modulation.telemetry();
 }
 
 void GRATRAudioProcessor::getCurrentProgramStateInformation (juce::MemoryBlock& destData)
@@ -2875,109 +3113,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout GRATRAudioProcessor::createP
 		kParamLimThreshold, "Lim Threshold",
 		juce::NormalisableRange<float> (kLimThresholdMin, kLimThresholdMax, 0.1f), kLimThresholdDefault));
 	params.push_back (std::make_unique<juce::AudioParameterChoice> (
-		kParamLimMode, "Lim Mode", juce::StringArray { "NONE", "WET", "GLOBAL" }, kLimModeDefault));
+		kParamLimMode, "Lim Mode", juce::StringArray { "NONE", "WET", "GLOBAL" }, kLimModeDefault,
+		juce::AudioParameterChoiceAttributes().withAutomatable (false)));
+	params.push_back (std::make_unique<juce::AudioParameterChoice> (
+		kParamLimQuality, "Lim Quality",
+		juce::StringArray { "FAST", "CLEAN (GLOBAL)", "TRUE PEAK (GLOBAL)" }, kLimQualityDefault,
+		juce::AudioParameterChoiceAttributes().withAutomatable (false)));
 
-	// UI state (hidden from automation)
-	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiWidth, "UI Width", 360, 720, 360));
-	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiHeight, "UI Height", 240, 1200, 752));
-	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamUiPalette, "UI Palette", false));
-	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamUiCrt, "UI CRT", false));
-	params.push_back (std::make_unique<juce::AudioParameterBool> (kParamUiIoFx, "UI I/O FX", true));
-	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor0, "UI Color 0", 0, 0xFFFFFF, 0x00FF00));
-	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor1, "UI Color 1", 0, 0xFFFFFF, 0x000000));
-	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor2, "UI Color 2", 0, 0xFFFFFF, 0x0000FF));
-	params.push_back (std::make_unique<juce::AudioParameterInt> (kParamUiColor3, "UI Color 3", 0, 0xFFFFFF, 0xFF0000));
+	TR::Modulation::Integration::appendMacroParameters (params);
 
 	return { params.begin(), params.end() };
-}
-
-//==============================================================================
-// UI state management (identical to ECHO-TR pattern)
-
-void GRATRAudioProcessor::setUiEditorSize (int width, int height)
-{
-	const int w = juce::jlimit (360, 720, width);
-	const int h = juce::jlimit (752, 752, height);
-	uiEditorWidth.store (w, std::memory_order_relaxed);
-	uiEditorHeight.store (h, std::memory_order_relaxed);
-	apvts.state.setProperty (UiStateKeys::editorWidth, w, nullptr);
-	apvts.state.setProperty (UiStateKeys::editorHeight, h, nullptr);
-	setParameterPlainValue (apvts, kParamUiWidth, (float) w);
-	setParameterPlainValue (apvts, kParamUiHeight, (float) h);
-	updateHostDisplay();
-}
-
-int GRATRAudioProcessor::getUiEditorWidth() const noexcept
-{
-	const auto fromState = apvts.state.getProperty (UiStateKeys::editorWidth);
-	if (! fromState.isVoid()) return juce::jlimit (360, 720, (int) fromState);
-	if (uiWidthParam != nullptr) return juce::jlimit (360, 720, (int) std::lround (uiWidthParam->load (std::memory_order_relaxed)));
-	return juce::jlimit (360, 720, uiEditorWidth.load (std::memory_order_relaxed));
-}
-
-int GRATRAudioProcessor::getUiEditorHeight() const noexcept
-{
-	return 752;
-}
-
-void GRATRAudioProcessor::setUiUseCustomPalette (bool shouldUseCustomPalette)
-{
-	uiUseCustomPalette.store (shouldUseCustomPalette ? 1 : 0, std::memory_order_relaxed);
-	apvts.state.setProperty (UiStateKeys::useCustomPalette, shouldUseCustomPalette, nullptr);
-	setParameterPlainValue (apvts, kParamUiPalette, shouldUseCustomPalette ? 1.0f : 0.0f);
-	updateHostDisplay();
-}
-
-bool GRATRAudioProcessor::getUiUseCustomPalette() const noexcept
-{
-	const auto fromState = apvts.state.getProperty (UiStateKeys::useCustomPalette);
-	if (! fromState.isVoid()) return (bool) fromState;
-	if (uiPaletteParam != nullptr) return uiPaletteParam->load (std::memory_order_relaxed) > 0.5f;
-	return uiUseCustomPalette.load (std::memory_order_relaxed) != 0;
-}
-
-void GRATRAudioProcessor::setUiCrtEnabled (bool enabled)
-{
-	uiCrtEnabled.store (enabled ? 1 : 0, std::memory_order_relaxed);
-	apvts.state.setProperty (UiStateKeys::crtEnabled, enabled, nullptr);
-	setParameterPlainValue (apvts, kParamUiCrt, enabled ? 1.0f : 0.0f);
-	updateHostDisplay();
-}
-
-bool GRATRAudioProcessor::getUiCrtEnabled() const noexcept
-{
-	const auto fromState = apvts.state.getProperty (UiStateKeys::crtEnabled);
-	if (! fromState.isVoid()) return (bool) fromState;
-	if (uiCrtParam != nullptr) return uiCrtParam->load (std::memory_order_relaxed) > 0.5f;
-	return uiCrtEnabled.load (std::memory_order_relaxed) != 0;
-}
-
-void GRATRAudioProcessor::setUiIoFxEnabled (bool enabled)
-{
-	uiIoFxEnabled.store (enabled ? 1 : 0, std::memory_order_relaxed);
-	apvts.state.setProperty (UiStateKeys::ioFxEnabled, enabled, nullptr);
-	setParameterPlainValue (apvts, kParamUiIoFx, enabled ? 1.0f : 0.0f);
-	updateHostDisplay();
-}
-
-bool GRATRAudioProcessor::getUiIoFxEnabled() const noexcept
-{
-	const auto fromState = apvts.state.getProperty (UiStateKeys::ioFxEnabled);
-	if (! fromState.isVoid()) return (bool) fromState;
-	if (uiIoFxParam != nullptr) return uiIoFxParam->load (std::memory_order_relaxed) > 0.5f;
-	return uiIoFxEnabled.load (std::memory_order_relaxed) != 0;
-}
-
-void GRATRAudioProcessor::setUiIoExpanded (bool expanded)
-{
-	apvts.state.setProperty (UiStateKeys::ioExpanded, expanded, nullptr);
-}
-
-bool GRATRAudioProcessor::getUiIoExpanded() const noexcept
-{
-	const auto fromState = apvts.state.getProperty (UiStateKeys::ioExpanded);
-	if (! fromState.isVoid()) return (bool) fromState;
-	return false;
 }
 
 void GRATRAudioProcessor::setMidiChannel (int channel)
@@ -3078,45 +3223,6 @@ int GRATRAudioProcessor::getTriggerDelayMs() const noexcept
 	const auto fromState = apvts.state.getProperty (UiStateKeys::triggerDelayMs);
 	if (! fromState.isVoid()) return juce::jlimit (0, 100, (int) fromState);
 	return triggerDelayMs.load (std::memory_order_relaxed);
-}
-
-void GRATRAudioProcessor::setUiCustomPaletteColour (int index, juce::Colour colour)
-{
-	if (index >= 0 && index < 4)
-	{
-		uiCustomPalette[(size_t) index].store (colour.getARGB(), std::memory_order_relaxed);
-		const juce::String key = UiStateKeys::customPalette[(size_t) index];
-		apvts.state.setProperty (key, (int) colour.getARGB(), nullptr);
-		if (uiColorParams[(size_t) index] != nullptr)
-		{
-			const char* colorParamIds[4] { kParamUiColor0, kParamUiColor1, kParamUiColor2, kParamUiColor3 };
-			setParameterPlainValue (apvts, colorParamIds[index], (float) (int) colour.getARGB());
-		}
-		updateHostDisplay();
-	}
-}
-
-juce::Colour GRATRAudioProcessor::getUiCustomPaletteColour (int index) const noexcept
-{
-	if (index < 0 || index >= 4)
-		return juce::Colours::white;
-
-	const juce::String key = UiStateKeys::customPalette[(size_t) index];
-	const auto fromState = apvts.state.getProperty (key);
-	if (! fromState.isVoid())
-		return juce::Colour ((juce::uint32) (int) fromState);
-
-	if (uiColorParams[(size_t) index] != nullptr)
-	{
-		const int rgb = juce::jlimit (0, 0xFFFFFF,
-		                              (int) std::lround (uiColorParams[(size_t) index]->load (std::memory_order_relaxed)));
-		const juce::uint8 r = (juce::uint8) ((rgb >> 16) & 0xFF);
-		const juce::uint8 g = (juce::uint8) ((rgb >> 8) & 0xFF);
-		const juce::uint8 b = (juce::uint8) (rgb & 0xFF);
-		return juce::Colour::fromRGB (r, g, b);
-	}
-
-	return juce::Colour (uiCustomPalette[(size_t) index].load (std::memory_order_relaxed));
 }
 
 //==============================================================================

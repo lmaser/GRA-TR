@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <JUCERPROJECT id="Uwf9kq" name="GRA-TR" projectType="audioplug" useAppConfig="0"
+              version="1.4.0" companyName="NMSTR" companyWebsite="https://github.com/lmaser/GRA-TR"
               addUsingNamespaceToJuceHeader="0" jucerFormatVersion="1"
               pluginWantsMidiInput="1" pluginCharacteristicsValue="pluginWantsMidiIn">
   <MAINGROUP id="Ijb2Rm" name="GRA-TR">
@@ -9,11 +10,53 @@
             file="Source/PluginProcessor.cpp"/>
       <FILE id="WdpI4X" name="PluginProcessor.h" compile="0" resource="0"
             file="Source/PluginProcessor.h"/>
-      <FILE id="YphQha" name="PluginEditor.cpp" compile="1" resource="0"
-            file="Source/PluginEditor.cpp"/>
-      <FILE id="jiBlET" name="PluginEditor.h" compile="0" resource="0" file="Source/PluginEditor.h"/>
-      <FILE id="Crt001" name="CrtEffect.h" compile="0" resource="0" file="Source/CrtEffect.h"/>
-      <FILE id="Inf001" name="InfoContent.h" compile="0" resource="0" file="Source/InfoContent.h"/>
+      <GROUP id="graModulation" name="Modulation">
+        <FILE id="graModCfgC" name="GraModulationConfig.cpp" compile="1" resource="0" file="Source/Modulation/GraModulationConfig.cpp"/>
+        <FILE id="graModCfgH" name="GraModulationConfig.h" compile="0" resource="0" file="Source/Modulation/GraModulationConfig.h"/>
+      </GROUP>
+      <GROUP id="graUiV2" name="UIV2">
+        <FILE id="graUiD1" name="GraUiDefinition.cpp" compile="1" resource="0" file="Source/UIV2/GraUiDefinition.cpp"/>
+        <FILE id="graUiD2" name="GraUiDefinition.h" compile="0" resource="0" file="Source/UIV2/GraUiDefinition.h"/>
+        <FILE id="graUiB1" name="GraBackendBindings.cpp" compile="1" resource="0" file="Source/UIV2/GraBackendBindings.cpp"/>
+        <FILE id="graUiB2" name="GraBackendBindings.h" compile="0" resource="0" file="Source/UIV2/GraBackendBindings.h"/>
+        <FILE id="graUiF1" name="GraV2EditorFactory.cpp" compile="1" resource="0" file="Source/UIV2/GraV2EditorFactory.cpp"/>
+        <FILE id="graUiF2" name="GraV2EditorFactory.h" compile="0" resource="0" file="Source/UIV2/GraV2EditorFactory.h"/>
+      </GROUP>
+    </GROUP>
+    <GROUP id="sharedUiV2" name="TR-Shared UI V2">
+      <FILE id="sharedV2C" name="TRSimpleUIV2.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/TRSimpleUIV2.cpp"/>
+      <FILE id="sharedV2H" name="TRSimpleUIV2.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/TRSimpleUIV2.h"/>
+      <FILE id="sharedV2E" name="SimpleEditorHost.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Runtime/SimpleEditorHost.cpp"/>
+      <FILE id="sharedV2EH" name="SimpleEditorHost.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Runtime/SimpleEditorHost.h"/>
+      <FILE id="sharedV2B" name="SimpleJuceBackend.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Runtime/SimpleJuceBackend.h"/>
+      <FILE id="sharedV2GS1" name="SimpleGlobalSettings.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Runtime/SimpleGlobalSettings.cpp"/>
+      <FILE id="sharedV2GS2" name="SimpleGlobalSettings.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Runtime/SimpleGlobalSettings.h"/>
+      <FILE id="sharedV2PM1" name="TRPresetManager.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Preset/TRPresetManager.cpp"/>
+      <FILE id="sharedV2PM2" name="TRPresetManager.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Preset/TRPresetManager.h"/>
+      <FILE id="sharedV2LF1" name="SimpleV2LookAndFeel.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Style/SimpleV2LookAndFeel.cpp"/>
+      <FILE id="sharedV2LF2" name="SimpleV2LookAndFeel.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Style/SimpleV2LookAndFeel.h"/>
+      <FILE id="sharedV2DC1" name="SimpleDescriptorControl.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleDescriptorControl.cpp"/>
+      <FILE id="sharedV2DC2" name="SimpleDescriptorControl.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleDescriptorControl.h"/>
+      <FILE id="sharedV2DP1" name="SimpleDetailPanel.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleDetailPanel.cpp"/>
+      <FILE id="sharedV2DP2" name="SimpleDetailPanel.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleDetailPanel.h"/>
+      <FILE id="sharedV2PB1" name="SimplePresetBrowser.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimplePresetBrowser.cpp"/>
+      <FILE id="sharedV2PB2" name="SimplePresetBrowser.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimplePresetBrowser.h"/>
+      <FILE id="sharedV2SP1" name="SimpleSettingsPanel.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleSettingsPanel.cpp"/>
+      <FILE id="sharedV2SP2" name="SimpleSettingsPanel.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleSettingsPanel.h"/>
+      <FILE id="sharedV2VS1" name="SimpleVisualSignature.cpp" compile="1" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleVisualSignature.cpp"/>
+      <FILE id="sharedV2VS2" name="SimpleVisualSignature.h" compile="0" resource="0" file="../TR-Shared/SimpleUIV2/Components/SimpleVisualSignature.h"/>
+    </GROUP>
+    <GROUP id="sharedModulation" name="TR-Shared Modulation">
+      <FILE id="sharedModStateC" name="TRModulationState.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/State/TRModulationState.cpp"/>
+      <FILE id="sharedModStateH" name="TRModulationState.h" compile="0" resource="0" file="../TR-Shared/Modulation/State/TRModulationState.h"/>
+      <FILE id="sharedModRuntimeC" name="TRModulationRuntime.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/Runtime/TRModulationRuntime.cpp"/>
+      <FILE id="sharedModRuntimeH" name="TRModulationRuntime.h" compile="0" resource="0" file="../TR-Shared/Modulation/Runtime/TRModulationRuntime.h"/>
+      <FILE id="sharedModBridgeC" name="TRParameterModulationBridge.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/Integration/TRParameterModulationBridge.cpp"/>
+      <FILE id="sharedModBridgeH" name="TRParameterModulationBridge.h" compile="0" resource="0" file="../TR-Shared/Modulation/Integration/TRParameterModulationBridge.h"/>
+      <FILE id="sharedModUiC" name="TRModulationWorkspace.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/UI/TRModulationWorkspace.cpp"/>
+      <FILE id="sharedModUiH" name="TRModulationWorkspace.h" compile="0" resource="0" file="../TR-Shared/Modulation/UI/TRModulationWorkspace.h"/>
+      <FILE id="sharedSimpleModC" name="TRSimpleModulationWorkspace.cpp" compile="1" resource="0" file="../TR-Shared/Modulation/UI/TRSimpleModulationWorkspace.cpp"/>
+      <FILE id="sharedSimpleModH" name="TRSimpleModulationWorkspace.h" compile="0" resource="0" file="../TR-Shared/Modulation/UI/TRSimpleModulationWorkspace.h"/>
     </GROUP>
   </MAINGROUP>
   <MODULES>
@@ -34,7 +77,7 @@
   </MODULES>
   <JUCEOPTIONS JUCE_STRICT_REFCOUNTEDPOINTER="1" JUCE_VST3_CAN_REPLACE_VST2="0"/>
   <EXPORTFORMATS>
-    <VS2022 targetFolder="Builds/VisualStudio2022">
+    <VS2022 targetFolder="Builds/VisualStudio2022" extraCompilerFlags="/FS">
       <CONFIGURATIONS>
         <CONFIGURATION isDebug="1" name="Debug" targetName="GRA-TR"/>
         <CONFIGURATION isDebug="0" name="Release" targetName="GRA-TR"/>
